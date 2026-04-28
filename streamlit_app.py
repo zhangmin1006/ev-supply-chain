@@ -173,13 +173,17 @@ def compute_summary(data):
 
 # ── Chart helpers ─────────────────────────────────────────────────────────────
 
-def line(fig, x, y, name, color, dash="solid", width=1.8, fill=False, row=1, col=1, showlegend=True):
-    fig.add_trace(go.Scatter(
+def line(fig, x, y, name, color, dash="solid", width=1.8, fill=False, row=None, col=None, showlegend=True):
+    trace = go.Scatter(
         x=x, y=y, name=name, line=dict(color=color, width=width, dash=dash),
         fill="tozeroy" if fill else "none",
         fillcolor=color.replace(")", ",0.12)").replace("rgb", "rgba") if fill else None,
         showlegend=showlegend, mode="lines",
-    ), row=row, col=col)
+    )
+    if row is not None and col is not None:
+        fig.add_trace(trace, row=row, col=col)
+    else:
+        fig.add_trace(trace)
 
 
 def std_layout(fig, title="", height=350, show_legend=True):
