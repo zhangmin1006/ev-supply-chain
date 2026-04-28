@@ -159,6 +159,64 @@
       .tab-nav { padding: 0 14px; }
       header { padding: 12px 14px; }
     }
+
+    /* ── Supply Chain Structure ── */
+    #view-structure { padding: 20px 28px; }
+    .sc-header { margin-bottom: 14px; }
+    .sc-header h2 { font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+    .sc-header p { font-size: .78rem; color: var(--muted); line-height: 1.5; max-width: 820px; }
+    .sc-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .sc-filter-btn { padding: 5px 13px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: .74rem; font-weight: 600; cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .sc-filter-btn:hover { color: var(--text); border-color: var(--accent); }
+    .sc-filter-btn.active { color: #fff; }
+    .sc-rlegend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 16px; font-size: .72rem; color: var(--muted); }
+    .rleg-item { display: flex; align-items: center; gap: 4px; }
+    .rleg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .sc-scroll { overflow-x: auto; padding-bottom: 12px; margin-bottom: 24px; }
+    .sc-flow { display: inline-flex; align-items: stretch; gap: 0; min-height: 500px; }
+    .sc-tier { width: 236px; flex-shrink: 0; display: flex; flex-direction: column; }
+    .sc-tier-hdr { background: var(--card); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; padding: 10px 12px; text-align: center; }
+    .sc-tier-hdr .th-icon { font-size: 1.1rem; line-height: 1.2; }
+    .sc-tier-hdr .th-name { font-size: .83rem; font-weight: 700; margin-top: 2px; }
+    .sc-tier-hdr .th-sub { font-size: .66rem; color: var(--muted); margin-top: 1px; }
+    .sc-tier-nodes { flex: 1; border: 1px solid var(--border); border-radius: 0 0 8px 8px; padding: 6px; display: flex; flex-direction: column; gap: 5px; background: rgba(26,29,39,.6); }
+    .sc-node { background: var(--card); border: 1px solid var(--border); border-left: 3px solid transparent; border-radius: 6px; padding: 7px 9px; transition: opacity .2s; }
+    .sc-node.dimmed { opacity: 0.13; }
+    .sc-node .sn-name { font-size: .79rem; font-weight: 600; display: flex; align-items: center; gap: 5px; margin-bottom: 2px; flex-wrap: wrap; }
+    .sn-badge { display: inline-block; font-size: .59rem; font-weight: 700; padding: 1px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: .2px; white-space: nowrap; flex-shrink: 0; }
+    .sn-badge.critical { background: rgba(239,68,68,.18); color: #fca5a5; }
+    .sn-badge.high { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .sn-badge.moderate { background: rgba(234,179,8,.18); color: #fde68a; }
+    .sn-badge.low { background: rgba(16,185,129,.18); color: #6ee7b7; }
+    .sc-node .sn-stat { font-size: .73rem; font-weight: 600; color: var(--text); }
+    .sc-node .sn-lead { font-size: .67rem; color: var(--muted); margin: 2px 0; line-height: 1.35; }
+    .sc-node .sn-note { font-size: .66rem; color: var(--muted); margin-top: 1px; line-height: 1.3; }
+    .sc-node .sn-chains { display: flex; gap: 3px; margin-top: 5px; flex-wrap: wrap; }
+    .sn-cdot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    .sc-risk-critical { border-left-color: #ef4444; }
+    .sc-risk-high { border-left-color: #f59e0b; }
+    .sc-risk-moderate { border-left-color: #eab308; }
+    .sc-risk-low { border-left-color: #10b981; }
+    .sc-arrow-col { width: 22px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 46px; color: #4a5568; font-size: 1.1rem; user-select: none; }
+    .sc-insights-wrap { margin-bottom: 24px; }
+    .sc-insights-wrap h3 { font-size: .9rem; font-weight: 600; margin-bottom: 12px; }
+    .vuln-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 10px; }
+    .vuln-card { background: var(--card); border: 1px solid var(--border); border-left: 3px solid transparent; border-radius: 8px; padding: 12px 14px; }
+    .vuln-card .vc-level { font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px; }
+    .vuln-card .vc-text { font-size: .79rem; color: var(--text); line-height: 1.5; }
+    .vuln-card .vc-src { font-size: .67rem; color: var(--muted); margin-top: 7px; font-style: italic; }
+    .sdv-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+    .sdv-panel h3 { font-size: .9rem; font-weight: 600; margin-bottom: 6px; }
+    .sdv-layers { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 12px; }
+    .sdv-layer { border-radius: 7px; padding: 10px 12px; }
+    .sdv-layer h4 { font-size: .76rem; font-weight: 700; margin-bottom: 5px; }
+    .sdv-layer p { font-size: .72rem; color: var(--muted); line-height: 1.45; margin-bottom: 5px; }
+    .sdv-layer ul { list-style: none; }
+    .sdv-layer li { font-size: .71rem; color: var(--muted); padding: 2px 0; display: flex; gap: 5px; }
+    .sdv-layer li::before { content: '›'; flex-shrink: 0; }
+    @media (max-width: 700px) {
+      #view-structure { padding: 14px; }
+    }
   </style>
 </head>
 <body>
@@ -172,6 +230,7 @@
   <button class="tab-btn active" onclick="switchTab('catalog', this)">📦 Component Reference</button>
   <button class="tab-btn" onclick="switchTab('market', this)">📡 Live Market Data</button>
   <button class="tab-btn" onclick="switchTab('sources', this)">🗄️ Data Sources</button>
+  <button class="tab-btn" onclick="switchTab('structure', this)">🔗 Value Chain</button>
 </nav>
 
 <!-- ══════════════ TAB 1: COMPONENT REFERENCE ══════════════ -->
@@ -378,6 +437,11 @@
       <tbody id="ds-tbody"></tbody>
     </table>
   </div>
+</div>
+
+<!-- ══════════════ TAB 4: VALUE CHAIN STRUCTURE ══════════════ -->
+<div id="view-structure" class="view">
+  <div id="sc-content"></div>
 </div>
 
 <script>
@@ -982,8 +1046,262 @@ function switchTab(tab, el) {
   if (tab === 'sources') renderDSTable();
 }
 
+// ══════════════════════════════════════════════════════
+// SUPPLY CHAIN STRUCTURE DATA
+// Sources: IEA Global EV Outlook 2024, USGS MCS 2024,
+// Fujimoto & Zhou (CEIBS Auto Forum, Dec 2025),
+// Company investor reports, BloombergNEF, Yole Intelligence
+// ══════════════════════════════════════════════════════
+const SC_CHAINS = [
+  { id:'battery',     label:'🔋 Battery',     color:'#3b82f6' },
+  { id:'motor',       label:'⚙️ Motor',        color:'#10b981' },
+  { id:'electronics', label:'💻 Electronics',  color:'#a855f7' },
+  { id:'thermal',     label:'🌡️ Thermal',      color:'#f59e0b' },
+  { id:'charging',    label:'🔌 Charging',     color:'#06b6d4' },
+  { id:'software',    label:'🖥️ Software',     color:'#ec4899' },
+];
+
+const SC_TIERS = [
+  {
+    id:'raw', label:'Raw Materials', sub:'Mining & Extraction', icon:'⛏️',
+    nodes:[
+      { id:'lithium',   name:'Lithium',           risk:'moderate', stat:'180,000 t Li/yr',   lead:'Australia 46%, Chile 30%, China 14%', chains:['battery'],                      note:'All Li-ion chemistries; spodumene + brine' },
+      { id:'cobalt',    name:'Cobalt',             risk:'critical', stat:'190,000 t/yr',      lead:'DR Congo 70%, Russia 4%, Australia 3%', chains:['battery'],                   note:'NMC/NCA cathodes; ESG & political risk' },
+      { id:'nickel',    name:'Nickel',             risk:'high',     stat:'3,300,000 t/yr',    lead:'Indonesia 49%, Philippines 10%, Russia 7%', chains:['battery','motor'],        note:'NMC cathodes; battery-grade processing' },
+      { id:'graphite',  name:'Natural Graphite',   risk:'critical', stat:'1,300,000 t/yr',    lead:'China 79%, Mozambique 9%, Madagascar 3%', chains:['battery'],                  note:'Primary anode precursor; synthetic also China' },
+      { id:'ree',       name:'Rare Earth Elements',risk:'critical', stat:'300,000 t REO/yr',  lead:'China 85%, USA 12%, Myanmar 2%', chains:['motor'],                            note:'Neodymium/Dysprosium for PMSM magnets' },
+      { id:'copper',    name:'Copper',             risk:'low',      stat:'22,000,000 t/yr',   lead:'Chile 27%, Peru 10%, China 8%', chains:['motor','electronics','charging'],     note:'Motor windings, wiring harness, busbars' },
+      { id:'sic_raw',   name:'Silicon Carbide',    risk:'critical', stat:'~2,500 t crystal',  lead:'China 80%+ wafer cap., USA (Wolfspeed)', chains:['electronics'],              note:'Next-gen inverter & BMS substrate' },
+      { id:'aluminium', name:'Aluminium',          risk:'high',     stat:'70,000,000 t/yr',   lead:'China 57%, India 6%, Russia 5%', chains:['battery','thermal','motor'],        note:'Pack enclosures, heat exchangers, motor housing' },
+      { id:'manganese', name:'Manganese',          risk:'moderate', stat:'20,000,000 t/yr',   lead:'S. Africa 35%, Gabon 16%, Australia 15%', chains:['battery'],                 note:'NMC cathodes; LMFP emerging chemistry' },
+    ]
+  },
+  {
+    id:'processing', label:'Material Processing', sub:'Refining & Chemicals', icon:'🏭',
+    nodes:[
+      { id:'cathode_mat', name:'Cathode Active Materials', risk:'critical', stat:'China ~70% share',  lead:'CNGR, Umicore, Sumitomo, L&F', chains:['battery'],                   note:'NMC/LFP/NCA precursor coating; pCAM & CAM' },
+      { id:'anode_mat',   name:'Anode (Graphite)',         risk:'critical', stat:'China ~75% share',  lead:'BTR, Shanshan, POSCO, Morgan Advanced', chains:['battery'],           note:'Natural & synthetic graphite processing' },
+      { id:'li_chem',     name:'Li Compounds',             risk:'high',     stat:'China ~60% share',  lead:'Albemarle, SQM, Ganfeng, Livent', chains:['battery'],                 note:'Li carbonate/hydroxide for cathode use' },
+      { id:'ree_sep',     name:'RE Separation & Magnets',  risk:'critical', stat:'China ~90% share',  lead:'China Northern RE, MP Materials (USA)', chains:['motor'],              note:'NdFeB magnet alloy; key bottleneck for PMSM' },
+      { id:'sic_wafer',   name:'SiC Wafers/Substrates',   risk:'high',     stat:'USA+EU lead',       lead:'Wolfspeed, Coherent, SICC (China)', chains:['electronics'],            note:'OEMs signing multi-year direct supply deals' },
+      { id:'alum_alloy',  name:'Aluminium Alloys',         risk:'moderate', stat:'Diversified',       lead:'Novelis, Constellium, Norsk Hydro', chains:['battery','thermal'],      note:'6xxx-series for auto battery enclosures' },
+      { id:'electrolyte', name:'Electrolyte & Separator',  risk:'high',     stat:'China ~70% share',  lead:'Capchem, Tinci (electrolyte); Asahi Kasei, Toray (separator)', chains:['battery'], note:'LiPF6 salts + polyolefin separator film' },
+    ]
+  },
+  {
+    id:'components', label:'Component Mfg', sub:'Core Components', icon:'⚙️',
+    nodes:[
+      { id:'cells',       name:'Battery Cells',          risk:'critical', stat:'China ~75% volume', lead:'CATL, LG Energy Solution, BYD, Panasonic, Samsung SDI, SK On', chains:['battery'],        note:'Li-ion cell production; East Asia concentrated' },
+      { id:'power_semi',  name:'Power Semiconductors',   risk:'high',     stat:'TSMC fab bottleneck',lead:'Infineon, ON Semi, STMicro, Wolfspeed, TI, NXP', chains:['electronics'],                 note:'SiC MOSFET, Si IGBT, GaN; fab at TSMC/GlobalFoundries' },
+      { id:'motors_comp', name:'Motor Components',       risk:'moderate', stat:'Germany + Japan lead',lead:'Bosch, Nidec, BorgWarner, ZF, Continental', chains:['motor'],                           note:'PMSM dominant; NdFeB magnet-dependent' },
+      { id:'passive',     name:'Passive Components',     risk:'high',     stat:'Japan dominant',     lead:'TDK, Murata, Taiyo Yuden, Vishay', chains:['electronics'],                               note:'Capacitors, inductors, resistors — Japan ~60% share' },
+      { id:'sensors_raw', name:'CMOS / Radar / LiDAR',  risk:'moderate', stat:'Israel + Japan + USA',lead:'Sony (CMOS), Mobileye (EyeQ), Bosch (radar), Luminar (LiDAR)', chains:['software'],    note:'Imaging sensors, radar MMICs, solid-state LiDAR' },
+      { id:'connectors',  name:'Connectors & Terminals', risk:'low',      stat:'Global',             lead:'TE Connectivity, Aptiv, Yazaki, Amphenol, Phoenix Contact', chains:['motor','charging','electronics'], note:'HV connectors, charging inlets, signal connectors' },
+    ]
+  },
+  {
+    id:'subsystems', label:'Sub-Systems', sub:'Tier-1 Suppliers', icon:'🔧',
+    nodes:[
+      { id:'battery_pack', name:'Battery Pack + BMS',    risk:'critical', stat:'China ~75% volume',   lead:'CATL, BYD, Panasonic, LG Energy Solution', chains:['battery'],          note:'Cell-to-pack; BMS electronics integrated' },
+      { id:'inverter',     name:'Traction Inverter',     risk:'high',     stat:'SiC supply constrained',lead:'BorgWarner, Vitesco, Infineon, ON Semiconductor', chains:['electronics'], note:'SiC MOSFET-based; OEMs verticalizing supply' },
+      { id:'motor_drive',  name:'Motor + eAxle',         risk:'moderate', stat:'Germany + Japan lead', lead:'Bosch, ZF, Nidec, BorgWarner, Dana', chains:['motor'],                  note:'eAxle: motor + gearbox + inverter integrated' },
+      { id:'obc_sys',      name:'Onboard Charger (OBC)', risk:'low',      stat:'Diversified',          lead:'BorgWarner, Valeo, Brusa, Delta Electronics, Hyundai Mobis', chains:['charging'], note:'AC→DC; bidirectional V2G OBCs growing' },
+      { id:'thermal_sys',  name:'Thermal Management',    risk:'moderate', stat:'EU + Korea lead',      lead:'Valeo, Hanon Systems, Mahle, SANHUA, Dana', chains:['thermal'],          note:'Liquid cooling + heat pump; R1234yf EU mandated' },
+      { id:'hvac_sys',     name:'HVAC / Heat Pump',      risk:'low',      stat:'EU + Japan + Korea',   lead:'Valeo, Hanon, Denso, Sanden, SANHUA', chains:['thermal'],               note:'+20–25% cold-weather range vs. PTC heating' },
+      { id:'vcu_sys',      name:'VCU / Domain Controller',risk:'moderate',stat:'TSMC fab concentration',lead:'Continental, Bosch, NVIDIA DRIVE Orin, Qualcomm, NXP', chains:['software'], note:'SDV shift; 5–7nm TSMC chips in production' },
+      { id:'adas_sys',     name:'ADAS Sensor Suite',     risk:'moderate', stat:'Israel + USA + Japan', lead:'Mobileye, Bosch, Continental, Luminar, Sony', chains:['software'],       note:'Camera+radar+LiDAR; UNECE R155 mandatory EU 2024' },
+      { id:'harness_sys',  name:'HV Wiring Harness',     risk:'high',     stat:'Labour-intensive',     lead:'Aptiv, Sumitomo Electric, Leoni, Yazaki, TE Connectivity', chains:['motor','electronics','charging'], note:'Ukraine shock 2022; Morocco/Mexico/Romania hubs' },
+      { id:'pdu_sys',      name:'Power Distribution Unit',risk:'moderate',stat:'USA + Ireland lead',   lead:'Littelfuse, Aptiv, Sensata, TE Connectivity, Eaton', chains:['electronics'], note:'HV junction box + pyrotechnic crash fuse' },
+    ]
+  },
+  {
+    id:'oem', label:'OEM Assembly', sub:'Vehicle Integration', icon:'🚗',
+    nodes:[
+      { id:'oem_cn', name:'Chinese OEMs',  risk:'low',      stat:'~60% of global EV', lead:'BYD, SAIC, Geely, NIO, Li Auto, Xpeng, AITO', chains:['battery','motor','electronics','thermal','charging','software'], note:'Most vertically integrated; BYD makes own cells, motors, chips' },
+      { id:'oem_us', name:'US OEMs',       risk:'moderate', stat:'~13% of global EV', lead:'Tesla, GM (Ultium), Ford, Rivian, Lucid', chains:['battery','motor','electronics','thermal','charging','software'],    note:'IRA driving domestic content; Tesla most vertically integrated' },
+      { id:'oem_de', name:'German OEMs',   risk:'moderate', stat:'~12% of global EV', lead:'VW Group (ID.), BMW (i series), Mercedes-Benz (EQ)', chains:['battery','motor','electronics','thermal','charging','software'], note:'Heavy Tier-1 reliance; cell supply from Korea/China' },
+      { id:'oem_kr', name:'Korean OEMs',   risk:'low',      stat:'~8% of global EV',  lead:'Hyundai, Kia (E-GMP platform)', chains:['battery','motor','electronics','thermal','charging','software'],              note:'Captive cell supply (SK On, Samsung SDI)' },
+      { id:'oem_jp', name:'Japanese OEMs', risk:'moderate', stat:'~5% of global EV',  lead:'Toyota (bZ series), Honda, Nissan (Ariya), Subaru', chains:['battery','motor','electronics','thermal','charging','software'], note:'Late EV push; Toyota solid-state target 2027–2028' },
+    ]
+  },
+  {
+    id:'markets', label:'End Markets', sub:'IEA Battery Demand 2023', icon:'🌍',
+    nodes:[
+      { id:'mkt_cn',  name:'China',         risk:'low', stat:'493 GWh (2023)',  lead:'~60% global share — +33% YoY', chains:['battery','motor','electronics','thermal','charging','software'], note:'Largest EV market; NEV dual-credit policy' },
+      { id:'mkt_eu',  name:'Europe',         risk:'low', stat:'147 GWh (2023)',  lead:'~18% global share — +11% YoY', chains:['battery','motor','electronics','thermal','charging','software'], note:'EU 2035 ICE ban; CCS2 standard; CBAM carbon border' },
+      { id:'mkt_us',  name:'United States',  risk:'low', stat:'104 GWh (2023)',  lead:'~13% global share — +35% YoY', chains:['battery','motor','electronics','thermal','charging','software'], note:'IRA domestic-content subsidies; NACS standard' },
+      { id:'mkt_row', name:'Rest of World',  risk:'low', stat:'78 GWh (2023)',   lead:'~9% global share — +42% YoY',  chains:['battery','motor','electronics','thermal','charging','software'], note:'Fastest growth; India, SE Asia, Middle East emerging' },
+    ]
+  },
+];
+
+const SC_VULNS = [
+  { risk:'CRITICAL', color:'#ef4444', title:'China Multi-Layer Supply Chain Dominance',
+    text:'China controls ~75% of global Li-ion cell production, ~79% of natural graphite mining, ~85–90% of rare earth separation, and ~70% of cathode active material processing. This multi-layer concentration creates compounding systemic risk: a single geopolitical event could cascade simultaneously across battery chemistry, motor manufacturing, and power electronics.',
+    src:'IEA Global EV Outlook 2024; USGS Mineral Commodity Summaries 2024' },
+  { risk:'CRITICAL', color:'#ef4444', title:'DR Congo Cobalt Single-Source Dependency',
+    text:'The Democratic Republic of Congo supplies >70% of global cobalt — essential for NMC/NCA battery chemistries. Artisanal mining, child labour concerns, political instability, and ESG investor pressure make this a systemic vulnerability. LFP chemistry (cobalt-free) is growing as a strategic response, but NMC remains dominant for energy-dense applications.',
+    src:'USGS Mineral Commodity Summaries 2024; IEA Critical Minerals Review 2023' },
+  { risk:'CRITICAL', color:'#ef4444', title:'Taiwan Semiconductor Concentration (TSMC)',
+    text:'TSMC (Taiwan) fabricates the majority of advanced automotive MCUs and ADAS compute chips — including NVIDIA DRIVE Orin (7nm) powering autonomous driving and NXP S32G for vehicle control. Cross-Strait geopolitical risk means disruption could simultaneously halt EV software, ADAS, and BMS electronics production globally.',
+    src:'NVIDIA, NXP, Qualcomm investor reports; TSMC annual report 2023' },
+  { risk:'HIGH', color:'#f59e0b', title:'SiC Wafer Duopoly & OEM Supply Competition',
+    text:'SiC wafer supply is concentrated at Wolfspeed and Coherent (both USA), with Chinese producers (SICC, TankeBlue) growing. OEMs — Tesla, Renault, Stellantis, Hyundai — signed multi-year direct supply agreements in 2022–2024, bypassing Tier-1 channels. This upstream verticalisation is structurally new in the automotive supply chain.',
+    src:'Wolfspeed, STMicroelectronics investor relations; Yole Intelligence Power Electronics 2023' },
+  { risk:'HIGH', color:'#f59e0b', title:'Wiring Harness — Ukraine Shock & Labour Vulnerability',
+    text:'Harness assembly is highly labour-intensive (~50kg of cables in an EV), driving production to Ukraine, Morocco, Mexico, and Romania. Russia\'s 2022 invasion disrupted Leoni\'s and Fujikura\'s Ukrainian facilities, causing production stoppages at BMW, VW, Porsche, and Audi within days — revealing a critical single-point failure in European EV production.',
+    src:'Leoni AG Ukraine impact disclosure 2022; Aptiv Annual Report 2023' },
+  { risk:'HIGH', color:'#f59e0b', title:'Rare Earth Processing Monopoly & Export Controls',
+    text:'China performs ~90% of global rare earth separation and NdFeB magnet production — essential for Permanent Magnet Synchronous Motors (PMSM) used in ~80% of EVs. China\'s 2023 export controls on gallium/germanium and 2024 processing technology restrictions signal progressive weaponisation of this bottleneck against Western EV supply chains.',
+    src:'USGS MCS 2024; IEA Critical Minerals Review 2023; Chinese MOFCOM export control notices' },
+  { risk:'MODERATE', color:'#eab308', title:'SDV Software Layer — Architecture Shift Reshaping Competition',
+    text:'Software-Defined Vehicles split the supply chain into three architectural layers (Fujimoto & Zhou, CEIBS 2025): Ground (integral hardware — Japan/Germany advantage), Low Sky (embedded software/ECUs), and High Sky (modular application software/AI — China/USA advantage). This creates strategic incentives for cross-national hardware-software alliances rather than purely vertical integration.',
+    src:'Fujimoto & Zhou, 19th CEIBS Auto Forum, Shanghai, Dec 2025; McKinsey Software-Defined Vehicle 2023' },
+  { risk:'MODERATE', color:'#eab308', title:'Charging Standard Fragmentation — North America Consolidating',
+    text:'Three major DC fast-charging standards fragment global infrastructure: CCS2 (Europe — regulatory mandate), NACS/SAE J3400 (US — rapidly displacing CCS1; adopted by Ford, GM, Honda, VW, Toyota by 2024–2025), and GB/T (China — mandatory). CHAdeMO is declining globally. MCS (Megawatt Charging System) is emerging for heavy trucks >1MW.',
+    src:'SAE J3400 standard; CharIN e.V.; IEA Global EV Outlook 2024' },
+];
+
+let scActiveChain = 'all';
+
+function renderSC() {
+  const el = document.getElementById('sc-content');
+  if (!el) return;
+
+  const filterBtns = `
+    <div class="sc-filters">
+      <button class="sc-filter-btn active" onclick="filterSC('all',this)">All Chains</button>
+      ${SC_CHAINS.map(c => `<button class="sc-filter-btn" onclick="filterSC('${c.id}',this)">${c.label}</button>`).join('')}
+    </div>`;
+
+  const legend = `
+    <div class="sc-rlegend">
+      <span style="font-weight:600;color:var(--text)">Concentration Risk:</span>
+      <span class="rleg-item"><span class="rleg-dot" style="background:#ef4444"></span>Critical (&gt;75% single source)</span>
+      <span class="rleg-item"><span class="rleg-dot" style="background:#f59e0b"></span>High (50–75%)</span>
+      <span class="rleg-item"><span class="rleg-dot" style="background:#eab308"></span>Moderate (25–50%)</span>
+      <span class="rleg-item"><span class="rleg-dot" style="background:#10b981"></span>Low / Diversified</span>
+      <span style="margin-left:8px">|</span>
+      <span style="margin-left:8px">Coloured dots = supply chain membership</span>
+    </div>`;
+
+  const tiers = SC_TIERS.map((tier, i) => {
+    const nodes = tier.nodes.map(n => {
+      const dots = n.chains.map(cid => {
+        const ch = SC_CHAINS.find(c => c.id === cid);
+        return ch ? `<span class="sn-cdot" style="background:${ch.color}" title="${ch.label}"></span>` : '';
+      }).join('');
+      return `<div class="sc-node sc-risk-${n.risk}" data-chains="${n.chains.join(',')}" data-node="${n.id}">
+          <div class="sn-name">${n.name}<span class="sn-badge ${n.risk}">${n.risk}</span></div>
+          <div class="sn-stat">${n.stat}</div>
+          <div class="sn-lead">${n.lead}</div>
+          <div class="sn-note">${n.note}</div>
+          <div class="sn-chains">${dots}</div>
+        </div>`;
+    }).join('');
+    const arrow = i > 0 ? '<div class="sc-arrow-col">›</div>' : '';
+    return `${arrow}<div class="sc-tier">
+      <div class="sc-tier-hdr">
+        <div class="th-icon">${tier.icon}</div>
+        <div class="th-name">Tier ${i}: ${tier.label}</div>
+        <div class="th-sub">${tier.sub}</div>
+      </div>
+      <div class="sc-tier-nodes">${nodes}</div>
+    </div>`;
+  }).join('');
+
+  const vulns = SC_VULNS.map(v => `
+    <div class="vuln-card" style="border-left-color:${v.color}">
+      <div class="vc-level" style="color:${v.color}">${v.risk} — ${v.title}</div>
+      <div class="vc-text">${v.text}</div>
+      <div class="vc-src">Source: ${v.src}</div>
+    </div>`).join('');
+
+  const sdvPanel = `
+    <div class="sdv-panel">
+      <h3>🔄 SDV Transformation: Three-Layer Supply Chain Architecture
+        <span style="font-size:.72rem;color:var(--muted);font-weight:400"> — Framework: Fujimoto & Zhou, 19th CEIBS Auto Forum, Shanghai, Dec 2025</span>
+      </h3>
+      <p style="font-size:.78rem;color:var(--muted);line-height:1.5;max-width:820px">Software-Defined Vehicles restructure the EV supply chain into three distinct architectural layers with different competitive dynamics. Countries with <em>coordination capability</em> (Japan, Germany — stable labour, multi-skilled workers) excel at integral hardware; those with <em>specialisation capability</em> (China, USA — fluid labour, standardised tasks) excel at modular application software. This architectural divide creates strategic incentives for international hardware–software alliances.</p>
+      <div class="sdv-layers">
+        <div class="sdv-layer" style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.28)">
+          <h4 style="color:#d8b4fe">🌐 High Sky — Application Software</h4>
+          <p>Modular/open architecture. Weight-free; physical laws do not constrain design. Agile development. Platform-based ecosystems.</p>
+          <ul>
+            <li>Infotainment, connectivity, AI features</li>
+            <li>OTA update platforms, digital marketplaces</li>
+            <li>LLM/generative AI integration (Copilot, Gemini)</li>
+            <li>Comparative advantage: China, USA</li>
+            <li>Key: BYD/Huawei OS, NVIDIA, Google, Apple</li>
+          </ul>
+        </div>
+        <div class="sdv-layer" style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28)">
+          <h4 style="color:#93c5fd">📡 Low Sky — Embedded Software & E/E Architecture</h4>
+          <p>Cyber-physical interface. Real-time OS, ECU software, V2X protocols. Functional safety critical (ISO 26262 ASIL-D).</p>
+          <ul>
+            <li>RTOS, AUTOSAR Classic/Adaptive, vehicle OS</li>
+            <li>ADAS perception & sensor fusion algorithms</li>
+            <li>Cybersecurity (UNECE R155) + OTA (R156)</li>
+            <li>Comparative advantage: Germany, USA (mixed)</li>
+            <li>Key: Continental, Bosch, Mobileye, NVIDIA DRIVE</li>
+          </ul>
+        </div>
+        <div class="sdv-layer" style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.28)">
+          <h4 style="color:#6ee7b7">⚙️ Ground — Vehicle Hardware</h4>
+          <p>Integral/closed architecture. Physical laws dictate complex structure–function interdependencies (1 ton, 30,000+ parts). Waterfall development.</p>
+          <ul>
+            <li>Battery pack, motor, inverter, chassis, thermal</li>
+            <li>Structural safety, energy density, crash performance</li>
+            <li>Modularisation underway (CTP, CTC, eAxle)</li>
+            <li>Comparative advantage: Japan, Germany</li>
+            <li>Key: Bosch, ZF, Continental, Panasonic, CATL</li>
+          </ul>
+        </div>
+      </div>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="sc-header">
+      <h2>EV Supply Chain Structure — 6-Tier Value Chain Map</h2>
+      <p>Full upstream-to-market supply chain for battery electric vehicles (BEV). Left-border colour indicates supply concentration risk per node. Scroll horizontally to see all tiers. Use chain filters to highlight connected nodes across the value chain.</p>
+    </div>
+    ${filterBtns}
+    ${legend}
+    <div class="sc-scroll"><div class="sc-flow">${tiers}</div></div>
+    <div class="sc-insights-wrap">
+      <h3>🔍 Key Supply Chain Vulnerabilities &amp; Strategic Insights</h3>
+      <div class="vuln-grid">${vulns}</div>
+    </div>
+    <div style="margin-bottom:24px"></div>
+    ${sdvPanel}`;
+}
+
+function filterSC(chain, btn) {
+  scActiveChain = chain;
+  document.querySelectorAll('.sc-filter-btn').forEach(b => {
+    b.classList.remove('active');
+    b.style.background = '';
+    b.style.borderColor = '';
+    b.style.color = '';
+  });
+  btn.classList.add('active');
+  if (chain !== 'all') {
+    const ch = SC_CHAINS.find(c => c.id === chain);
+    if (ch) { btn.style.background = ch.color; btn.style.borderColor = ch.color; btn.style.color = '#fff'; }
+  }
+  document.querySelectorAll('.sc-node').forEach(n => {
+    if (chain === 'all') {
+      n.classList.remove('dimmed');
+    } else {
+      const inChain = n.dataset.chains.split(',').includes(chain);
+      n.classList.toggle('dimmed', !inChain);
+    }
+  });
+}
+
 // ── Init ──
 renderCards();
+renderSC();
 </script>
 </body>
 </html>
