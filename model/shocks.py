@@ -156,6 +156,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
     # S5: Compound shock — DRC cobalt + Ukraine harness simultaneously
     # Stress-test scenario: tests compounding multi-tier disruption.
     # Both shocks hit at the same time, representing correlated geopolitical risk.
+    # The harness leg is slightly amplified relative to the standalone Ukraine
+    # case because simultaneous cobalt disruption reduces logistics slack and
+    # supplier redeployment capacity during the acute phase.
     # ------------------------------------------------------------------
     "compound_shock": {
         "name":        "compound_shock",
@@ -172,13 +175,13 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
                 "target":     "t1_harness",
                 "start_week":  4,
                 "end_week":   12,
-                "severity":   0.80,
+                "severity":   0.85,
             },
             {
                 "target":     "t1_harness",
                 "start_week": 12,
                 "end_week":   36,
-                "severity":   0.35,
+                "severity":   0.40,
             },
         ],
     },

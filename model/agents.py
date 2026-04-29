@@ -27,6 +27,9 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from .config import EV_GLOBAL_UNITS_2023_K
+from .financial_profiles import DEFAULT_PROFILE, FinancialProfile
+
 # Weekly capacity growth rates (applied each step)
 # Cell capacity: IEA GEO 2024 29%/yr → weekly
 _CELL_GROWTH_WK = (1.29 ** (1 / 52)) - 1   # ≈ 0.00491
@@ -37,9 +40,29 @@ _TIER1_GROWTH_WK = _CELL_GROWTH_WK
 # ── Base ─────────────────────────────────────────────────────────────────────
 
 class Agent:
-    def __init__(self, agent_id: str, model):
+    def __init__(self, agent_id: str, model,
+                 financial_profile: FinancialProfile | None = None):
         self.agent_id = agent_id
         self.model    = model
+        self.financial_profile = financial_profile or DEFAULT_PROFILE
+        # Set by archetype subclasses to override financial-profile shock_absorption.
+        self._shock_absorption_override: Optional[float] = None
+
+    def _effective_shock_severity(self, severity: float) -> float:
+        # Archetype override takes priority over financial-profile calibration.
+        absorption = (self._shock_absorption_override
+                      if self._shock_absorption_override is not None
+                      else self.financial_profile.shock_absorption)
+        return max(0.0, min(1.0, severity * (1.0 - absorption)))
+
+    def _sd_price_signal(self) -> float:
+        """Single SD price signal used by agents for economic decisions."""
+        return max(0.60, min(3.00, self.model.get_price_signal()))
+
+    def _component_price_signal(self, name: str) -> float:
+        """Component-specific SD price index used by tier-level decisions."""
+        price = self.model.sd.component_prices.get(name, self._sd_price_signal())
+        return max(0.60, min(3.00, price))
 
     def step(self) -> None:
         raise NotImplementedError
@@ -66,14 +89,21 @@ class MineralSupplierAgent(Agent):
                  global_share: float,
                  ev_share_of_global: float,
                  safety_stock_weeks: int = 4,
-                 recovery_rate_wk: float = 0.04):
-        super().__init__(agent_id, model)
-        self.mineral           = mineral
-        self.country           = country
-        self.global_share      = global_share      # fraction of world production
-        self.ev_share          = ev_share_of_global  # fraction going to EV sector
-        self.safety_stock_weeks = safety_stock_weeks
-        self.recovery_rate_wk  = recovery_rate_wk
+                 recovery_rate_wk: float = 0.04,
+                 production_floor: float = 0.0,
+                 price_sensitivity: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(agent_id, model, financial_profile)
+        self.mineral            = mineral
+        self.country            = country
+        self.global_share       = global_share
+        self.ev_share           = ev_share_of_global
+        self.safety_stock_weeks = safety_stock_weeks * self.financial_profile.inventory_multiplier
+        self.recovery_rate_wk   = recovery_rate_wk * self.financial_profile.recovery_multiplier
+        # Floor below which shocks cannot reduce output (state/debt-service mandate).
+        self.production_floor   = production_floor
+        # Fraction of price-index deviation added as output boost when prices rise.
+        self.price_sensitivity  = price_sensitivity
 
         # State
         self.shock_multiplier:  float = 1.0
@@ -87,6 +117,7 @@ class MineralSupplierAgent(Agent):
 
     def apply_shock(self, severity: float) -> None:
         """severity ∈ [0, 1]:  0 = no effect, 1 = total shutdown."""
+        severity = self._effective_shock_severity(severity)
         self.is_shocked       = True
         self.shock_multiplier = max(0.0, 1.0 - severity)
 
@@ -101,7 +132,17 @@ class MineralSupplierAgent(Agent):
             self.shock_multiplier = min(1.0,
                 self.shock_multiplier + self.recovery_rate_wk)
 
-        self.output_fraction = self.shock_multiplier
+        # Production floor: state mandate or debt-service covenants prevent
+        # output from falling below a minimum fraction even when shocked.
+        self.output_fraction = max(self.production_floor, self.shock_multiplier)
+
+        # Price-sensitivity: market-driven producers expand output when the
+        # commodity price is above baseline (positive price signal).
+        if self.price_sensitivity > 0.0:
+            price_idx   = self.model.sd.prices.get(self.mineral, 1.0)
+            price_boost = self.price_sensitivity * max(0.0, price_idx - 1.0)
+            self.output_fraction = min(1.0, self.output_fraction + price_boost)
+
         self.output_history.append(self.output_fraction)
 
     # ── query ─────────────────────────────────────────────────────────────────
@@ -143,19 +184,26 @@ class CellManufacturerAgent(Agent):
                  lfp_fraction: float,
                  nmc_fraction: float,
                  safety_stock_weeks: int = 4,
-                 recovery_rate_wk: float = 0.04):
-        super().__init__(agent_id, model)
+                 recovery_rate_wk: float = 0.04,
+                 inventory_replenishment_weeks: float = 4.0,
+                 financial_fragility: bool = False,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(agent_id, model, financial_profile)
+        # Thin-balance-sheet flag: amplifies effective shock severity by 50%.
+        self.financial_fragility = financial_fragility
         self.name              = name
         self.country           = country
         self.weekly_capacity   = capacity_gwh_yr / 52.0   # GWh/week
         self.market_share      = market_share
         self.lfp_fraction      = lfp_fraction
         self.nmc_fraction      = nmc_fraction
-        self.safety_stock_weeks = safety_stock_weeks
-        self.recovery_rate_wk  = recovery_rate_wk
+        self.safety_stock_weeks = safety_stock_weeks * self.financial_profile.inventory_multiplier
+        self.recovery_rate_wk  = recovery_rate_wk * self.financial_profile.recovery_multiplier
+        self.capacity_growth_wk = _CELL_GROWTH_WK * self.financial_profile.growth_multiplier
+        self.inventory_replenishment_weeks = max(1.0, inventory_replenishment_weeks)
 
         # Inventory
-        self.inventory_gwh     = self.weekly_capacity * safety_stock_weeks
+        self.inventory_gwh     = self.weekly_capacity * self.safety_stock_weeks
         self.target_inventory  = self.inventory_gwh
 
         # State
@@ -169,21 +217,42 @@ class CellManufacturerAgent(Agent):
         self.inventory_history:  List[float] = []
         self.utilisation_history: List[float] = []
 
+    def _effective_shock_severity(self, severity: float) -> float:
+        if self.financial_fragility:
+            severity = min(1.0, severity * 1.50)  # thin balance-sheet amplifier
+        return super()._effective_shock_severity(severity)
+
     def _leontief_constraint(self, input_fracs: Dict[str, float]) -> float:
         """
-        Returns the tightest Leontief input constraint [0, 1].
-        LFP cells are immune to cobalt shortage.
+        Leontief input constraint [0, 1], chemistry-aware.
+
+        LFP cells are immune to cobalt shortage.  When the SD cobalt price
+        index is high, the effective NMC fraction is gradually reduced to
+        reflect industry-level chemistry substitution (F2 feedback loop).
+        The SD lfp_share signal provides the market-level mix adjustment;
+        individual agents retain their own chemistry profile but are modulated
+        by the macro price signal.
         """
         li  = input_fracs.get("lithium",  1.0)
         co  = input_fracs.get("cobalt",   1.0)
         gr  = input_fracs.get("graphite", 1.0)
 
-        # Cobalt constraint only applies to NMC/NCA portion
-        cobalt_effect = self.lfp_fraction + self.nmc_fraction * co
+        # Read cobalt price from SD price_signals (1.0 = baseline)
+        cobalt_price = self.model.sd.prices.get("cobalt", 1.0)
+
+        # Effective NMC fraction: high cobalt price partially reduces cobalt
+        # intensity as manufacturers blend in more LFP sub-cells / redesign.
+        # Effect: at cobalt_price = 2.0, effective NMC fraction falls 15%.
+        cobalt_price_adj = min(1.0, max(0.0, (cobalt_price - 1.0) * 0.15))
+        effective_nmc   = self.nmc_fraction * (1.0 - cobalt_price_adj)
+        effective_lfp   = 1.0 - effective_nmc   # conserves total to 1
+
+        cobalt_effect = effective_lfp + effective_nmc * co
 
         return min(li, gr, cobalt_effect)
 
     def apply_shock(self, severity: float) -> None:
+        severity = self._effective_shock_severity(severity)
         self.is_shocked       = True
         self.shock_multiplier = max(0.0, 1.0 - severity)
 
@@ -191,6 +260,13 @@ class CellManufacturerAgent(Agent):
         self.is_shocked = False
 
     def step(self) -> None:
+        price_signal = self._component_price_signal("pack")
+        price_premium = max(0.0, price_signal - 1.0)
+        price_discount = max(0.0, 1.0 - price_signal)
+        growth_multiplier = max(0.25, 1.0 + 0.80 * price_premium - 0.40 * price_discount)
+        self.weekly_capacity *= (1.0 + self.capacity_growth_wk * growth_multiplier)
+        self.target_inventory = self.weekly_capacity * self.safety_stock_weeks
+
         # Gradual recovery
         if not self.is_shocked and self.shock_multiplier < 1.0:
             self.shock_multiplier = min(1.0,
@@ -199,17 +275,21 @@ class CellManufacturerAgent(Agent):
         # Pull input availability from SD model
         input_fracs = self.model.sd.input_fractions
         constraint  = self._leontief_constraint(input_fracs)
+        downstream_demand = self.model.get_cell_demand(self.name)
 
         # Order-up-to: produce extra to replenish inventory
         gap = max(0.0, self.target_inventory - self.inventory_gwh)
-        desired = self.weekly_capacity + gap / 4.0
+        production_incentive = 1.0 + min(0.12, 0.10 * price_premium)
+        desired = (
+            downstream_demand * production_incentive
+            + min(gap / self.inventory_replenishment_weeks, downstream_demand * 0.10)
+        )
 
         max_production = self.weekly_capacity * self.shock_multiplier * constraint
         self.output_gwh = min(desired, max_production)
         self.output_gwh = max(0.0, self.output_gwh)
 
         # Update inventory
-        downstream_demand = self.model.get_cell_demand(self.name)
         fulfilled = min(downstream_demand, self.inventory_gwh + self.output_gwh)
         self.inventory_gwh = max(
             0.0,
@@ -246,19 +326,23 @@ class Tier1SupplierAgent(Agent):
                  lead_time_weeks: int,
                  safety_stock_weeks: int,
                  recovery_rate_wk: float = 0.04,
-                 bullwhip_factor: float = 1.25):
-        super().__init__(agent_id, model)
+                 bullwhip_factor: float = 1.25,
+                 dual_source_threshold: float = 0.20,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(agent_id, model, financial_profile)
         self.component          = component
         self.key_input          = key_input
         self.weekly_capacity    = capacity_k_yr / 52.0   # k units/week
         self.input_dependency   = input_dependency
         self.lead_time_weeks    = lead_time_weeks
-        self.safety_stock_weeks = safety_stock_weeks
-        self.recovery_rate_wk   = recovery_rate_wk
-        self.bullwhip_factor    = bullwhip_factor
+        self.safety_stock_weeks    = safety_stock_weeks * self.financial_profile.inventory_multiplier
+        self.recovery_rate_wk      = recovery_rate_wk * self.financial_profile.recovery_multiplier
+        self.capacity_growth_wk    = _TIER1_GROWTH_WK * self.financial_profile.growth_multiplier
+        self.bullwhip_factor       = bullwhip_factor
+        self.dual_source_threshold = dual_source_threshold
 
         # Inventory (k vehicle-equiv)
-        self.inventory          = self.weekly_capacity * safety_stock_weeks
+        self.inventory          = self.weekly_capacity * self.safety_stock_weeks
         self.target_inventory   = self.inventory
 
         # Lead-time order pipeline: list length = lead_time_weeks
@@ -281,10 +365,21 @@ class Tier1SupplierAgent(Agent):
         effective constraint = (1 - dependency) + dependency × input_fraction
         This allows the non-critical portion to keep running.
         """
+        dependency = self.input_dependency
+        if self.key_input == "ree":
+            # Sustained rare-earth scarcity pushes OEMs/suppliers toward
+            # induction, wound-rotor, or ferrite-assisted motor designs. This
+            # keeps baseline growth from becoming a pure REE exhaustion story
+            # while preserving sensitivity to acute REE shocks.
+            ree_price = self.model.sd.prices.get("ree", 1.0)
+            substitution = min(0.80, max(0.0, (ree_price - 1.0) * 0.75))
+            dependency = max(0.12, self.input_dependency * (1.0 - substitution))
+
         frac = input_fracs.get(self.key_input, 1.0)
-        return (1.0 - self.input_dependency) + self.input_dependency * frac
+        return (1.0 - dependency) + dependency * frac
 
     def apply_shock(self, severity: float) -> None:
+        severity = self._effective_shock_severity(severity)
         self.is_shocked       = True
         self.shock_multiplier = max(0.0, 1.0 - severity)
 
@@ -292,6 +387,19 @@ class Tier1SupplierAgent(Agent):
         self.is_shocked = False
 
     def step(self) -> None:
+        price_name = {
+            "battery_pack": "pack",
+            "inverter": "inverter",
+            "motor": "motor",
+            "harness": "harness",
+        }.get(self.component, "parts")
+        price_signal = self._component_price_signal(price_name)
+        price_premium = max(0.0, price_signal - 1.0)
+        price_discount = max(0.0, 1.0 - price_signal)
+        growth_multiplier = max(0.25, 1.0 + 0.60 * price_premium - 0.30 * price_discount)
+        self.weekly_capacity *= (1.0 + self.capacity_growth_wk * growth_multiplier)
+        self.target_inventory = self.weekly_capacity * self.safety_stock_weeks
+
         # Gradual recovery
         if not self.is_shocked and self.shock_multiplier < 1.0:
             self.shock_multiplier = min(1.0,
@@ -311,13 +419,14 @@ class Tier1SupplierAgent(Agent):
         in_transit = sum(self.pipeline)
         inv_position = self.inventory + in_transit
         shortfall = max(0.0, self.target_inventory - inv_position)
-        order = (self.weekly_capacity + shortfall * self.bullwhip_factor)
+        order_incentive = 1.0 + min(0.10, 0.08 * price_premium)
+        order = (self.weekly_capacity * order_incentive + shortfall * self.bullwhip_factor)
 
         # Dual sourcing: boost order if critically low
-        if self.inventory < self.target_inventory * 0.20:
+        if self.inventory < self.target_inventory * self.dual_source_threshold:
             self.dual_source_active = True
             order *= 1.20   # 20% premium sourcing
-        elif self.inventory > self.target_inventory * 0.60:
+        elif self.inventory > self.target_inventory * (self.dual_source_threshold * 3.0):
             self.dual_source_active = False
 
         self.pipeline.append(order)
@@ -325,10 +434,11 @@ class Tier1SupplierAgent(Agent):
         # Determine output this week
         input_fracs = self.model.sd.input_fractions
         constraint  = self._input_constraint(input_fracs)
-        max_out = self.weekly_capacity * self.shock_multiplier * constraint
+        overtime = 1.0 + min(0.08, 0.06 * price_premium)
+        max_out = self.weekly_capacity * overtime * self.shock_multiplier * constraint
 
         weekly_demand = self.model.get_component_demand(self.component)
-        self.output_k = min(max_out, self.inventory)
+        self.output_k = min(max_out, self.inventory, weekly_demand * 1.10)
         self.inventory = max(0.0, self.inventory - self.output_k)
 
         shortage = max(0.0, weekly_demand - self.output_k)
@@ -356,16 +466,24 @@ class OEMAgent(Agent):
                  region: str,
                  annual_target_k: int,
                  safety_stock_weeks: int = 5,
-                 dual_source_trigger: float = 0.20):
-        super().__init__(agent_id, model)
+                 dual_source_trigger: float = 0.20,
+                 halt_threshold: float = 0.10,
+                 vertical_integration: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(agent_id, model, financial_profile)
+        # Production fraction below which a halt-week is recorded.
+        self.halt_threshold = halt_threshold
         self.name                = name
         self.region              = region
         self.weekly_target       = annual_target_k / 52.0   # k vehicles/week
-        self.safety_stock_weeks  = safety_stock_weeks
+        self.safety_stock_weeks  = safety_stock_weeks * self.financial_profile.inventory_multiplier
         self.dual_source_trigger = dual_source_trigger
+        self.vertical_integration = max(0.0, min(1.0, vertical_integration))
+        self.recovery_rate_wk    = 0.04 * self.financial_profile.recovery_multiplier
+        self.capacity_growth_wk  = _TIER1_GROWTH_WK * self.financial_profile.growth_multiplier
 
         # Component inventories (k vehicle-equivalents each)
-        init = self.weekly_target * safety_stock_weeks
+        init = self.weekly_target * self.safety_stock_weeks
         self.inv: Dict[str, float] = {
             "packs":     init,
             "inverters": init,
@@ -392,6 +510,7 @@ class OEMAgent(Agent):
 
     def apply_shock(self, severity: float) -> None:
         """severity ∈ [0, 1]: fraction of OEM assembly throughput lost."""
+        severity = self._effective_shock_severity(severity)
         self.is_shocked       = True
         self.shock_multiplier = max(0.0, 1.0 - severity)
 
@@ -399,9 +518,25 @@ class OEMAgent(Agent):
         self.is_shocked = False   # gradual recovery handled in step()
 
     def step(self) -> None:
+        vehicle_price = self._component_price_signal("vehicle")
+        component_cost = (
+            0.72 * self._component_price_signal("pack")
+            + 0.08 * self._component_price_signal("inverter")
+            + 0.12 * self._component_price_signal("motor")
+            + 0.08 * self._component_price_signal("harness")
+        )
+        margin_signal = vehicle_price / max(component_cost, 1e-9)
+        price_premium = max(0.0, 1.0 - margin_signal)
+        price_discount = max(0.0, margin_signal - 1.0)
+        integration_buffer = 0.50 * self.vertical_integration
+        margin_response = 1.0 - (0.45 - integration_buffer) * price_premium + 0.20 * price_discount
+        margin_response = max(0.30, min(1.50, margin_response))
+        self.weekly_target *= (1.0 + self.capacity_growth_wk * margin_response)
+        self.target_inv = self.weekly_target * self.safety_stock_weeks
+
         # Gradual recovery once shock is resolved
         if not self.is_shocked and self.shock_multiplier < 1.0:
-            self.shock_multiplier = min(1.0, self.shock_multiplier + 0.04)
+            self.shock_multiplier = min(1.0, self.shock_multiplier + self.recovery_rate_wk)
         # Receive component deliveries
         deliveries = self.model.get_component_deliveries(self.name)
         for comp, qty in deliveries.items():
@@ -411,7 +546,16 @@ class OEMAgent(Agent):
             )
 
         # Leontief: producible = min of all component inventories
-        producible = min(self.inv.values())
+        # Vertically integrated OEMs can internally bridge part of a component
+        # shortfall (e.g. BYD cells/power electronics, Toyota/Panasonic ties).
+        # The bridge is capped so integration cushions shortages without
+        # erasing the Leontief assembly logic.
+        internal_bridge = self.weekly_target * self.vertical_integration * 0.35
+        effective_inv = {
+            comp: qty + internal_bridge
+            for comp, qty in self.inv.items()
+        }
+        producible = min(effective_inv.values())
         producible = max(0.0, producible)
 
         # Demand this week (from market + clear backlog)
@@ -420,6 +564,7 @@ class OEMAgent(Agent):
             weekly_demand + self.backlog_k * 0.15,
             self.weekly_target * 1.10   # max 110% of target
         )
+        target_prod *= max(0.70, 1.0 - (0.20 - 0.10 * self.vertical_integration) * price_premium)
         self.production_k = min(target_prod, producible) * self.shock_multiplier
         self.production_k = max(0.0, self.production_k)
 
@@ -428,19 +573,21 @@ class OEMAgent(Agent):
             self.inv[comp] = max(0.0, self.inv[comp] - self.production_k)
 
         # Halt detection
-        if self.production_k < self.weekly_target * 0.10:
+        if self.production_k < self.weekly_target * self.halt_threshold:
             self.halt_weeks += 1
 
-        # Backlog and cumulative loss
+        # Backlog and cumulative loss. Production above current-week demand is
+        # catch-up output and clears the waiting order book one-for-one.
         shortfall = max(0.0, weekly_demand - self.production_k)
-        self.backlog_k = max(0.0, self.backlog_k + shortfall)
+        surplus   = max(0.0, self.production_k - weekly_demand)
+        self.backlog_k = max(0.0, self.backlog_k + shortfall - surplus)
         self.cumulative_loss_k += shortfall
 
         # Record
         avg_inv = sum(self.inv.values()) / 4.0
         self.production_history.append(self.production_k)
         self.backlog_history.append(self.backlog_k)
-        self.halt_history.append(1 if self.production_k < self.weekly_target * 0.10 else 0)
+        self.halt_history.append(1 if self.production_k < self.weekly_target * self.halt_threshold else 0)
         self.inv_history.append(avg_inv)
 
 
@@ -457,16 +604,21 @@ class MarketAgent(Agent):
                  gwh_2023: float,
                  yoy_growth: float,
                  avg_kwh_per_veh: float,
-                 price_elasticity: float = -0.30):
+                 price_elasticity: float = -0.30,
+                 backlog_sensitivity: float = 0.35,
+                 availability_floor: float = 0.55):
         super().__init__(agent_id, model)
         self.region           = region
         self.gwh_annual       = gwh_2023
         self.yoy_growth       = yoy_growth
         self.avg_kwh          = avg_kwh_per_veh
         self.price_elasticity = price_elasticity
+        self.backlog_sensitivity = max(0.0, backlog_sensitivity)
+        self.availability_floor = max(0.10, min(1.0, availability_floor))
 
-        self._weekly_growth   = (1.0 + yoy_growth) ** (1.0 / 52.0) - 1.0
+        self._weekly_growth    = (1.0 + yoy_growth) ** (1.0 / 52.0) - 1.0
         self.weekly_demand_gwh = gwh_2023 / 52.0
+        self._trend_demand_gwh = gwh_2023 / 52.0  # price-independent trend; step() applies price as level adjustment
 
         # Metrics
         self.demand_history: List[float] = []
@@ -476,13 +628,429 @@ class MarketAgent(Agent):
         return self.weekly_demand_gwh * 1000.0 / self.avg_kwh   # k vehicles
 
     def step(self) -> None:
-        # Compound weekly growth
-        self.weekly_demand_gwh *= (1.0 + self._weekly_growth)
+        # Advance trend demand (compound growth, price-independent)
+        self._trend_demand_gwh *= (1.0 + self._weekly_growth)
 
-        # Price response from SD model (global price index signal)
-        price_idx = self.model.get_price_signal()
-        price_effect = 1.0 + self.price_elasticity * (price_idx - 1.0)
-        price_effect = max(0.60, min(1.20, price_effect))   # bound ±40%
-        self.weekly_demand_gwh *= price_effect
+        # Price elasticity: apply as a LEVEL adjustment, not a compounding factor.
+        # This means demand returns toward trend when prices normalise, instead
+        # of permanently compounding the price impact week after week.
+        price_idx    = self.model.get_price_signal()
+        price_level  = 1.0 + self.price_elasticity * (price_idx - 1.0)
+        price_level  = max(0.50, min(1.20, price_level))
 
+        # Long order books reduce realised near-term demand as buyers defer,
+        # cancel, or switch segments. This closes the market-availability
+        # feedback loop and prevents the no-shock baseline from accumulating an
+        # unbounded order backlog when material supply lags demand growth.
+        backlog_scale = (
+            self.model.get_backlog_scale_k()
+            if hasattr(self.model, "get_backlog_scale_k")
+            else EV_GLOBAL_UNITS_2023_K
+        )
+        backlog_ratio = self.model.sd.oem_backlog_k / max(backlog_scale, 1e-9)
+        availability_level = max(
+            self.availability_floor,
+            min(1.0, 1.0 - self.backlog_sensitivity * backlog_ratio),
+        )
+
+        self.weekly_demand_gwh = self._trend_demand_gwh * price_level * availability_level
         self.demand_history.append(self.weekly_demand_gwh)
+
+
+# =============================================================================
+# Behavioural Archetype Subclasses
+# =============================================================================
+# Each archetype is a thin subclass that sets archetype-specific defaults and
+# then overrides key behavioural attributes after calling super().__init__().
+# The financial-profile calibration still refines safety_stock and recovery
+# where no explicit override is applied; shock_absorption and growth are always
+# set exactly as specified by the archetype.
+# =============================================================================
+
+
+# ── Tier 1 Archetypes: Mineral Suppliers ──────────────────────────────────────
+
+class StateBacked(MineralSupplierAgent):
+    """State-policy-driven producer (Chinese graphite/REE, cobalt-other).
+
+    Behaviour: state mandate keeps output above 85% even when shocked.
+    Low price sensitivity (production target set by policy, not market).
+    Fast recovery because state support accelerates restart.
+    """
+    ARCHETYPE = "StateBacked"
+
+    def __init__(self, agent_id: str, model,
+                 mineral: str, country: str,
+                 global_share: float, ev_share_of_global: float,
+                 safety_stock_weeks: int = 4,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, mineral, country, global_share, ev_share_of_global,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=0.08,
+            production_floor=0.85,
+            price_sensitivity=0.10,
+            financial_profile=financial_profile,
+        )
+        self.recovery_rate_wk           = 0.08   # state support → fast recovery
+        self._shock_absorption_override = 0.40   # political backing buffers shocks
+
+
+class WesternMiner(MineralSupplierAgent):
+    """Listed western miner (Australian/Chilean lithium, DRC cobalt).
+
+    Behaviour: market-driven output; meaningful price response; limited
+    state support so shocks hit harder; moderate recovery.
+    """
+    ARCHETYPE = "WesternMiner"
+
+    def __init__(self, agent_id: str, model,
+                 mineral: str, country: str,
+                 global_share: float, ev_share_of_global: float,
+                 safety_stock_weeks: int = 4,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, mineral, country, global_share, ev_share_of_global,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=0.04,
+            production_floor=0.60,
+            price_sensitivity=0.35,
+            financial_profile=financial_profile,
+        )
+        self.recovery_rate_wk           = 0.04
+        self._shock_absorption_override = 0.15
+
+
+class GreenfieldBuilder(MineralSupplierAgent):
+    """Debt-service constrained, high-capex, must-run operator.
+
+    Behaviour: covenant obligations force near-full utilisation (floor=0.90);
+    almost zero price flexibility; very slow recovery after disruption because
+    thin cash buffers extend repair and restart timelines.
+    """
+    ARCHETYPE = "GreenfieldBuilder"
+
+    def __init__(self, agent_id: str, model,
+                 mineral: str, country: str,
+                 global_share: float, ev_share_of_global: float,
+                 safety_stock_weeks: int = 4,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, mineral, country, global_share, ev_share_of_global,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=0.02,
+            production_floor=0.90,
+            price_sensitivity=0.05,
+            financial_profile=financial_profile,
+        )
+        self.recovery_rate_wk           = 0.02   # thin cash → slow restart
+        self._shock_absorption_override = 0.05   # nearly no financial cushion
+
+
+# ── Tier 2 Archetypes: Cell Manufacturers ─────────────────────────────────────
+
+class PlatformLeader(CellManufacturerAgent):
+    """Technology and scale platform leader (CATL, BYD).
+
+    Behaviour: strong balance sheet absorbs shocks; 10% extra safety stock;
+    grows at market baseline rate (already at scale); high shock absorption.
+    """
+    ARCHETYPE = "PlatformLeader"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, country: str,
+                 capacity_gwh_yr: float, market_share: float,
+                 lfp_fraction: float, nmc_fraction: float,
+                 safety_stock_weeks: int = 4,
+                 recovery_rate_wk: float = 0.04,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, country, capacity_gwh_yr, market_share,
+            lfp_fraction, nmc_fraction,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.35
+        self.inventory_replenishment_weeks = 3.0
+        # 10% larger safety buffer than base; adjust targets accordingly
+        self.safety_stock_weeks *= 1.10
+        self.target_inventory    = self.weekly_capacity * self.safety_stock_weeks
+        self.inventory_gwh       = self.target_inventory
+        # Grows at market baseline; not trying to hyper-scale from a small base
+        self.capacity_growth_wk  = _CELL_GROWTH_WK * 1.0
+
+
+class HyperScaleChallenger(CellManufacturerAgent):
+    """Fast-growing challenger with thin balance sheet (CALB, others_cells).
+
+    Behaviour: 1.8× growth ambition; 30% larger inventory as operational hedge
+    for a fragile balance sheet; shocks are amplified (financial_fragility=True).
+    """
+    ARCHETYPE = "HyperScaleChallenger"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, country: str,
+                 capacity_gwh_yr: float, market_share: float,
+                 lfp_fraction: float, nmc_fraction: float,
+                 safety_stock_weeks: int = 4,
+                 recovery_rate_wk: float = 0.04,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, country, capacity_gwh_yr, market_share,
+            lfp_fraction, nmc_fraction,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            financial_fragility=True,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.08
+        self.inventory_replenishment_weeks = 5.0
+        # 30% larger buffer to compensate for supply-chain inexperience
+        self.safety_stock_weeks *= 1.30
+        self.target_inventory    = self.weekly_capacity * self.safety_stock_weeks
+        self.inventory_gwh       = self.target_inventory
+        # Hyper-scale growth target
+        self.capacity_growth_wk  = _CELL_GROWTH_WK * 1.80
+
+
+class IncumbentUnderPressure(CellManufacturerAgent):
+    """NMC-heavy incumbent losing share (LG ES, Panasonic, Samsung SDI, SK On).
+
+    Behaviour: heavy cobalt exposure; below-market growth as OEMs diversify away;
+    low shock absorption from thin EV-segment margins; slow recovery.
+    """
+    ARCHETYPE = "IncumbentUnderPressure"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, country: str,
+                 capacity_gwh_yr: float, market_share: float,
+                 lfp_fraction: float, nmc_fraction: float,
+                 safety_stock_weeks: int = 5,
+                 recovery_rate_wk: float = 0.03,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, country, capacity_gwh_yr, market_share,
+            lfp_fraction, nmc_fraction,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            financial_profile=financial_profile,
+        )
+        self.recovery_rate_wk           = 0.025  # slow restart under margin pressure
+        self._shock_absorption_override = 0.05
+        self.inventory_replenishment_weeks = 6.0
+        # Below-market growth as market share erodes
+        self.capacity_growth_wk         = _CELL_GROWTH_WK * 0.70
+
+
+# ── Tier 3 Archetypes: Sub-system Suppliers ───────────────────────────────────
+
+class PremiumPowerElectronics(Tier1SupplierAgent):
+    """High-value power electronics (inverter tier): long lead, large buffer.
+
+    Behaviour: 16-week lead time reflects fab capacity constraints; 8-week
+    safety stock; early dual-sourcing trigger at 15% of target; strong
+    balance sheets absorb shocks without immediate production cuts.
+    """
+    ARCHETYPE = "PremiumPowerElectronics"
+
+    def __init__(self, agent_id: str, model,
+                 component: str, key_input: str,
+                 capacity_k_yr: float, input_dependency: float,
+                 lead_time_weeks: int = 16,
+                 safety_stock_weeks: int = 8,
+                 recovery_rate_wk: float = 0.025,
+                 bullwhip_factor: float = 1.25,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, component, key_input, capacity_k_yr, input_dependency,
+            lead_time_weeks=lead_time_weeks,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            bullwhip_factor=bullwhip_factor,
+            dual_source_threshold=0.15,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.35
+        self.recovery_rate_wk           = recovery_rate_wk
+
+
+class EstablishedVolumeSupplier(Tier1SupplierAgent):
+    """High-volume established supplier (motor, harness).
+
+    Behaviour: moderate 8-week lead time; 4-week buffer; standard
+    dual-sourcing trigger; solid but not exceptional resilience.
+    """
+    ARCHETYPE = "EstablishedVolumeSupplier"
+
+    def __init__(self, agent_id: str, model,
+                 component: str, key_input: str,
+                 capacity_k_yr: float, input_dependency: float,
+                 lead_time_weeks: int = 8,
+                 safety_stock_weeks: int = 4,
+                 recovery_rate_wk: float = 0.04,
+                 bullwhip_factor: float = 1.25,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, component, key_input, capacity_k_yr, input_dependency,
+            lead_time_weeks=lead_time_weeks,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            bullwhip_factor=bullwhip_factor,
+            dual_source_threshold=0.20,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.20
+        self.recovery_rate_wk           = recovery_rate_wk
+
+
+class BatteryPackIntegrator(Tier1SupplierAgent):
+    """Battery pack assembly integrator: pure downstream of cell supply.
+
+    Behaviour: 4-week lead time; 3-week lean buffer; directly exposed to
+    cell availability; limited ability to absorb input shocks.
+    """
+    ARCHETYPE = "BatteryPackIntegrator"
+
+    def __init__(self, agent_id: str, model,
+                 component: str, key_input: str,
+                 capacity_k_yr: float, input_dependency: float,
+                 lead_time_weeks: int = 4,
+                 safety_stock_weeks: int = 3,
+                 recovery_rate_wk: float = 0.05,
+                 bullwhip_factor: float = 1.25,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, component, key_input, capacity_k_yr, input_dependency,
+            lead_time_weeks=lead_time_weeks,
+            safety_stock_weeks=safety_stock_weeks,
+            recovery_rate_wk=recovery_rate_wk,
+            bullwhip_factor=bullwhip_factor,
+            dual_source_threshold=0.20,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.10
+        self.recovery_rate_wk           = recovery_rate_wk
+
+
+# ── Tier 4 Archetypes: OEMs ───────────────────────────────────────────────────
+
+class ProfitableEstablishedOEM(OEMAgent):
+    """Profitable, stable OEM with strong balance sheet (Korean, Japanese).
+
+    Behaviour: 6-week buffer; strong shock absorption; fast recovery
+    underpinned by solid free cash flow and conservative supply-chain policy.
+    """
+    ARCHETYPE = "ProfitableEstablishedOEM"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, region: str, annual_target_k: int,
+                 safety_stock_weeks: int = 6,
+                 dual_source_trigger: float = 0.20,
+                 vertical_integration: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, region, annual_target_k,
+            safety_stock_weeks=safety_stock_weeks,
+            dual_source_trigger=dual_source_trigger,
+            vertical_integration=vertical_integration,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.45
+        self.recovery_rate_wk           = 0.06 * self.financial_profile.recovery_multiplier
+        # Enforce archetype's 6-week buffer regardless of config value
+        self.safety_stock_weeks = 6.0 * self.financial_profile.inventory_multiplier
+        self.target_inv         = self.weekly_target * self.safety_stock_weeks
+        for comp in self.inv:
+            self.inv[comp] = self.target_inv
+
+
+class TransitioningLegacyOEM(OEMAgent):
+    """ICE-to-EV transitioning legacy OEM (German, US, UK OEMs).
+
+    Behaviour: 4-week buffer (ICE-era JIT habits); cost pressure limits
+    buffer investment; moderate shock tolerance; medium recovery.
+    """
+    ARCHETYPE = "TransitioningLegacyOEM"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, region: str, annual_target_k: int,
+                 safety_stock_weeks: int = 4,
+                 dual_source_trigger: float = 0.20,
+                 vertical_integration: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, region, annual_target_k,
+            safety_stock_weeks=safety_stock_weeks,
+            dual_source_trigger=dual_source_trigger,
+            vertical_integration=vertical_integration,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.15
+        self.recovery_rate_wk           = 0.04 * self.financial_profile.recovery_multiplier
+        self.safety_stock_weeks = 4.0 * self.financial_profile.inventory_multiplier
+        self.target_inv         = self.weekly_target * self.safety_stock_weeks
+        for comp in self.inv:
+            self.inv[comp] = self.target_inv
+
+
+class EVNativeScaleAspirant(OEMAgent):
+    """EV-native Chinese aspirant scaling rapidly (other_chinese_oem group).
+
+    Behaviour: lean 3.5-week buffer (aggressive JIT); high growth aspiration
+    (1.4× baseline); moderate shock tolerance from domestic supply-chain proximity.
+    """
+    ARCHETYPE = "EVNativeScaleAspirant"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, region: str, annual_target_k: int,
+                 safety_stock_weeks: int = 4,
+                 dual_source_trigger: float = 0.20,
+                 vertical_integration: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, region, annual_target_k,
+            safety_stock_weeks=safety_stock_weeks,
+            dual_source_trigger=dual_source_trigger,
+            vertical_integration=vertical_integration,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.25
+        # Lean 3.5-week buffer (aggressive JIT scaling mindset)
+        self.safety_stock_weeks = 3.5 * self.financial_profile.inventory_multiplier
+        self.target_inv         = self.weekly_target * self.safety_stock_weeks
+        for comp in self.inv:
+            self.inv[comp] = self.target_inv
+        # High growth target: 40% above market baseline
+        self.capacity_growth_wk = _TIER1_GROWTH_WK * 1.40
+
+
+class PrecommercialStartup(OEMAgent):
+    """Pre-commercial EV startup with thin capital reserves.
+
+    Behaviour: 2-week skeleton buffer; near-zero shock absorption; halts
+    when production drops below 15% of target (tighter trip-wire than incumbents);
+    very slow recovery due to constrained access to capital.
+    """
+    ARCHETYPE = "PrecommercialStartup"
+
+    def __init__(self, agent_id: str, model,
+                 name: str, region: str, annual_target_k: int,
+                 safety_stock_weeks: int = 2,
+                 dual_source_trigger: float = 0.20,
+                 vertical_integration: float = 0.0,
+                 financial_profile: FinancialProfile | None = None):
+        super().__init__(
+            agent_id, model, name, region, annual_target_k,
+            safety_stock_weeks=safety_stock_weeks,
+            dual_source_trigger=dual_source_trigger,
+            halt_threshold=0.15,
+            vertical_integration=vertical_integration,
+            financial_profile=financial_profile,
+        )
+        self._shock_absorption_override = 0.03
+        self.recovery_rate_wk           = 0.02
+        self.safety_stock_weeks = 2.0 * self.financial_profile.inventory_multiplier
+        self.target_inv         = self.weekly_target * self.safety_stock_weeks
+        for comp in self.inv:
+            self.inv[comp] = self.target_inv

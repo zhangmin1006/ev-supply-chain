@@ -1,0 +1,11 @@
+scenario,mean_oem_production_k_wk,min_oem_production_k_wk,peak_loss_pct_vs_baseline_mean,cumulative_loss_k_veh_vs_baseline,recovery_week_below_90pct,max_total_backlog_k,max_price_signal,min_harness_stock_wk,min_cobalt_stock_wk,min_graphite_stock_wk,min_ree_stock_wk,min_sic_stock_wk
+baseline,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+china_catl_disruption,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+china_graphite,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+china_ree_restriction,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+compound_shock,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+drc_cobalt,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+sic_bottleneck,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+uk_supply_chain_friction,8.684,3.487,60.56,41.002,128,132.269,1.329,2.0,6.973,4.973,8.986,12.986
+ukraine_harness,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986
+us_china_tariff,8.842,3.723,57.887,0.0,128,116.643,1.35,1.956,6.973,4.973,8.986,12.986

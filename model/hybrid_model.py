@@ -32,12 +32,47 @@ from .config import (
     SIM, MINERALS, CELL_MAKERS, TIER1, OEMS, MARKETS,
     CELL_GLOBAL_GWH_2023, EV_GLOBAL_UNITS_2023_K,
     DEMAND_PRICE_ELASTICITY, BULLWHIP_FACTOR,
+    MINERAL_AGENT_ARCHETYPES, CELL_AGENT_ARCHETYPES,
+    TIER1_AGENT_ARCHETYPES, OEM_AGENT_ARCHETYPES,
 )
 from .sd_model import SDModel, BASELINE_WK
+from .financial_profiles import profile_for_agent, coverage_report, FOUR_TIER_AGENT_GROUPS
 from .agents import (
     MineralSupplierAgent, CellManufacturerAgent,
     Tier1SupplierAgent, OEMAgent, MarketAgent,
+    # Tier 1 archetypes
+    StateBacked, WesternMiner, GreenfieldBuilder,
+    # Tier 2 archetypes
+    PlatformLeader, HyperScaleChallenger, IncumbentUnderPressure,
+    # Tier 3 archetypes
+    PremiumPowerElectronics, EstablishedVolumeSupplier, BatteryPackIntegrator,
+    # Tier 4 archetypes
+    ProfitableEstablishedOEM, TransitioningLegacyOEM,
+    EVNativeScaleAspirant, PrecommercialStartup,
 )
+
+# ── Archetype class registries ────────────────────────────────────────────────
+_MINERAL_ARCHETYPE_CLASSES = {
+    "StateBacked":      StateBacked,
+    "WesternMiner":     WesternMiner,
+    "GreenfieldBuilder":GreenfieldBuilder,
+}
+_CELL_ARCHETYPE_CLASSES = {
+    "PlatformLeader":          PlatformLeader,
+    "HyperScaleChallenger":    HyperScaleChallenger,
+    "IncumbentUnderPressure":  IncumbentUnderPressure,
+}
+_TIER1_ARCHETYPE_CLASSES = {
+    "PremiumPowerElectronics":  PremiumPowerElectronics,
+    "EstablishedVolumeSupplier":EstablishedVolumeSupplier,
+    "BatteryPackIntegrator":    BatteryPackIntegrator,
+}
+_OEM_ARCHETYPE_CLASSES = {
+    "ProfitableEstablishedOEM": ProfitableEstablishedOEM,
+    "TransitioningLegacyOEM":   TransitioningLegacyOEM,
+    "EVNativeScaleAspirant":    EVNativeScaleAspirant,
+    "PrecommercialStartup":     PrecommercialStartup,
+}
 
 
 # ── Mineral supplier configuration (derived from config.MINERALS) ─────────────
@@ -77,11 +112,35 @@ class EVSupplyChainModel:
     def __init__(self,
                  scenario: Optional[Dict[str, Any]] = None,
                  seed: int = 42,
-                 n_weeks: int = 260):
+                 n_weeks: int = 260,
+                 focus_region: Optional[str] = "uk"):
         self.rng      = np.random.default_rng(seed)
         self.scenario = scenario or {}
         self.n_weeks  = n_weeks
         self.week     = 0
+        self.focus_region = focus_region
+        self._active_oem_names = [
+            name for name, cfg in OEMS.items()
+            if focus_region is None or cfg["region"] == focus_region
+        ]
+        self._active_market_regions = [
+            region for region in MARKETS
+            if focus_region is None or region == focus_region
+        ]
+        if not self._active_oem_names:
+            raise ValueError(f"No OEM agents configured for focus_region={focus_region!r}")
+        if not self._active_market_regions:
+            raise ValueError(f"No market agents configured for focus_region={focus_region!r}")
+        self.active_oem_target_k = sum(
+            OEMS[name]["annual_target_k"] for name in self._active_oem_names
+        )
+        self.active_market_gwh_2023 = sum(
+            MARKETS[region]["gwh_2023"] for region in self._active_market_regions
+        )
+        self.active_market_units_2023_k = sum(
+            MARKETS[region]["gwh_2023"] * 1000.0 / MARKETS[region]["avg_kwh_veh"]
+            for region in self._active_market_regions
+        )
 
         # ── Layers ──────────────────────────────────────────────────────────
         self.sd = SDModel(rng=self.rng)
@@ -117,19 +176,36 @@ class EVSupplyChainModel:
             ev_share = MINERALS[mineral]["ev_share"]
             safety   = MINERALS[mineral]["safety_stock_weeks"]
             for aid, country, gshare in sources:
-                a = MineralSupplierAgent(
-                    agent_id=aid, model=self,
-                    mineral=mineral, country=country,
-                    global_share=gshare,
-                    ev_share_of_global=ev_share,
-                    safety_stock_weeks=safety,
-                    recovery_rate_wk=0.04,
-                )
+                archetype_name = MINERAL_AGENT_ARCHETYPES.get(aid)
+                cls = _MINERAL_ARCHETYPE_CLASSES.get(archetype_name, MineralSupplierAgent)
+                if cls is MineralSupplierAgent:
+                    a = cls(
+                        agent_id=aid, model=self,
+                        mineral=mineral, country=country,
+                        global_share=gshare,
+                        ev_share_of_global=ev_share,
+                        safety_stock_weeks=safety,
+                        recovery_rate_wk=0.04,
+                        financial_profile=profile_for_agent(aid),
+                    )
+                else:
+                    # Archetype subclasses accept a subset of parameters;
+                    # recovery_rate and production_floor use archetype defaults.
+                    a = cls(
+                        agent_id=aid, model=self,
+                        mineral=mineral, country=country,
+                        global_share=gshare,
+                        ev_share_of_global=ev_share,
+                        safety_stock_weeks=safety,
+                        financial_profile=profile_for_agent(aid),
+                    )
                 self._mineral_agents[aid] = a
 
     def _build_cell_agents(self) -> None:
         for name, cfg in CELL_MAKERS.items():
-            a = CellManufacturerAgent(
+            archetype_name = CELL_AGENT_ARCHETYPES.get(name)
+            cls = _CELL_ARCHETYPE_CLASSES.get(archetype_name, CellManufacturerAgent)
+            a = cls(
                 agent_id=f"cell_{name}", model=self,
                 name=name,
                 country=cfg["country"],
@@ -139,6 +215,7 @@ class EVSupplyChainModel:
                 nmc_fraction=cfg["nmc_fraction"],
                 safety_stock_weeks=cfg["safety_stock_weeks"],
                 recovery_rate_wk=cfg["recovery_rate_wk"],
+                financial_profile=profile_for_agent(f"cell_{name}"),
             )
             self._cell_agents[name] = a
 
@@ -152,7 +229,9 @@ class EVSupplyChainModel:
             "harness":      ("copper",    0.00, TIER1["harness"]),
         }
         for comp, (key_input, dep, cfg) in cfg_map.items():
-            a = Tier1SupplierAgent(
+            archetype_name = TIER1_AGENT_ARCHETYPES.get(comp)
+            cls = _TIER1_ARCHETYPE_CLASSES.get(archetype_name, Tier1SupplierAgent)
+            a = cls(
                 agent_id=f"t1_{comp}", model=self,
                 component=comp,
                 key_input=key_input,
@@ -162,30 +241,39 @@ class EVSupplyChainModel:
                 safety_stock_weeks=cfg["safety_stock_weeks"],
                 recovery_rate_wk=cfg["recovery_rate_wk"],
                 bullwhip_factor=BULLWHIP_FACTOR,
+                financial_profile=profile_for_agent(f"t1_{comp}"),
             )
             self._tier1_agents[comp] = a
 
     def _build_oem_agents(self) -> None:
-        for name, cfg in OEMS.items():
-            a = OEMAgent(
+        for name in self._active_oem_names:
+            cfg = OEMS[name]
+            archetype_name = OEM_AGENT_ARCHETYPES.get(name)
+            cls = _OEM_ARCHETYPE_CLASSES.get(archetype_name, OEMAgent)
+            a = cls(
                 agent_id=f"oem_{name}", model=self,
                 name=name,
                 region=cfg["region"],
                 annual_target_k=cfg["annual_target_k"],
                 safety_stock_weeks=cfg["safety_stock_weeks"],
                 dual_source_trigger=cfg["dual_source_trigger"],
+                vertical_integration=cfg.get("vertical_integration", 0.0),
+                financial_profile=profile_for_agent(f"oem_{name}"),
             )
             self._oem_agents[name] = a
 
     def _build_market_agents(self) -> None:
-        for region, cfg in MARKETS.items():
+        for region in self._active_market_regions:
+            cfg = MARKETS[region]
             a = MarketAgent(
                 agent_id=f"mkt_{region}", model=self,
                 region=region,
                 gwh_2023=cfg["gwh_2023"],
                 yoy_growth=cfg["yoy"],
                 avg_kwh_per_veh=cfg["avg_kwh_veh"],
-                price_elasticity=DEMAND_PRICE_ELASTICITY,
+                price_elasticity=cfg.get("price_elasticity", DEMAND_PRICE_ELASTICITY),
+                backlog_sensitivity=cfg.get("backlog_sensitivity", 0.35),
+                availability_floor=cfg.get("availability_floor", 0.55),
             )
             self._market_agents[region] = a
 
@@ -255,13 +343,13 @@ class EVSupplyChainModel:
         total_demand_k_veh = sum(
             mkt.weekly_demand_k_veh for mkt in self._market_agents.values()
         )
-        return total_demand_k_veh * (
-            OEMS[oem_name]["annual_target_k"] / EV_GLOBAL_UNITS_2023_K
-        )
+        active_target = max(self.active_oem_target_k, 1e-9)
+        return total_demand_k_veh * (OEMS[oem_name]["annual_target_k"] / active_target)
 
     def get_component_deliveries(self, oem_name: str) -> Dict[str, float]:
         """k-unit deliveries of each component to an OEM this week."""
-        oem_share = OEMS[oem_name]["annual_target_k"] / EV_GLOBAL_UNITS_2023_K
+        active_target = max(self.active_oem_target_k, 1e-9)
+        oem_share = OEMS[oem_name]["annual_target_k"] / active_target
         # Map tier-1 agent keys to OEM inventory keys
         key_map = {
             "battery_pack": "packs",
@@ -276,27 +364,22 @@ class EVSupplyChainModel:
 
     def get_price_signal(self) -> float:
         """
-        Aggregate price pressure index (1.0 = baseline).
-        Weighted average of mineral stock shortfalls mapped to price.
-
-        Calibration: BNEF/IEA historical data shows:
-          - Lithium carbonate: +400% peak 2021-22 from supply tightness
-          - Cobalt: +170% 2017-18 DRC risk premium
-          - Graphite: +80% after China Oct-2023 export controls
-        We use a convex (1/frac − 1) response so price doubles at 50% stock,
-        triples at 33% stock — consistent with observed commodity behaviour.
-        Signal is capped at 3.0 to prevent instability.
+        Aggregate vehicle-facing price pressure index (1.0 = baseline).
+        Delegated to the SD model's report-based smoothed price-signal state.
         """
-        weights = {"lithium": 0.30, "cobalt": 0.25,
-                   "graphite": 0.20, "ree": 0.15, "sic_wafer": 0.10}
-        price_idx = 0.0
-        for mineral, w in weights.items():
-            frac = max(0.05, self.sd.input_fractions.get(mineral, 1.0))
-            # Convex response: 1/frac gives 2× at 50% stock, 4× at 25%
-            # Subtract 1 so baseline (frac=1) → contribution = 0
-            price_component = min(3.0, 1.0 / frac)
-            price_idx += w * price_component
-        return min(3.0, price_idx)
+        return self.sd.get_price_signal()
+
+    def get_cobalt_price(self) -> float:
+        """Cobalt price index from the SD model (1.0 = 2023 baseline)."""
+        return self.sd.prices.get("cobalt", 1.0)
+
+    def get_lfp_share(self) -> float:
+        """Current industry LFP share from SD chemistry-mix stock."""
+        return self.sd.lfp_share
+
+    def get_backlog_scale_k(self) -> float:
+        """Reference market size for active-region availability feedback."""
+        return max(self.active_market_units_2023_k, self.active_oem_target_k, 1e-9)
 
     # =========================================================================
     # SD flow aggregation
@@ -304,84 +387,122 @@ class EVSupplyChainModel:
 
     def _collect_flows(self) -> Dict[str, float]:
         """
-        Aggregate agent outputs into SD inflow/outflow pairs.
+        Aggregate agent outputs into SD inflow/outflow pairs plus the new
+        SD-state quantities introduced by the four-tier redesign.
 
-        Mineral flows (normalised):
-          inflow  = sum of supplier output fractions × their EV share weight
-          outflow = cell production as fraction of baseline demand
+        Existing keys (backward-compatible):
+          {mineral}_in / {mineral}_out  — normalised mineral supply/demand
+          cells_in / cells_out          — GWh
+          {component}_in / {component}_out — k vehicle-equiv
 
-        Component flows (absolute):
-          inflow  = production this week (GWh or k-units)
-          outflow = consumption this week by downstream tier
+        New keys passed to the redesigned SDModel:
+          lfp_gwh               — GWh of LFP cells produced this week
+          nmc_gwh               — GWh of NMC/NCA cells produced this week
+          cell_capacity_gwh_yr  — sum of all cell agent weekly capacities × 52
+          total_oem_prod_k      — k vehicles assembled this week (all OEMs)
+          total_demand_k        — k vehicles demanded this week (all markets)
+          order_rate_k          — k units ordered by Tier-1 agents (bullwhip numerator)
         """
         flows: Dict[str, float] = {}
 
-        # ── Mineral flows ────────────────────────────────────────────────────
-        # Baseline weekly consumption = 1.0 (normalised mineral unit)
+        # ── Tier 1: Mineral inflows (normalised supply fractions) ─────────────
         for mineral in ("lithium", "cobalt", "graphite", "ree", "sic_wafer"):
-            total_supply = sum(
+            flows[f"{mineral}_in"] = sum(
                 a.weekly_supply_contribution
                 for a in self._mineral_agents.values()
                 if a.mineral == mineral
             )
-            flows[f"{mineral}_in"] = total_supply
 
-        # Mineral outflow = cell production (as fraction of baseline demand)
-        total_cell_gwh = sum(
-            a.output_gwh for a in self._cell_agents.values()
-        )
+        # ── Tier 1: Mineral outflows (as fraction of baseline weekly demand) ──
+        total_cell_gwh  = sum(a.output_gwh for a in self._cell_agents.values())
         baseline_gwh_wk = BASELINE_WK["cells"]   # 15.81 GWh/wk
         cell_fraction   = total_cell_gwh / max(baseline_gwh_wk, 1e-9)
 
-        # kg of mineral per kWh → weekly consumption fraction
-        # For normalised stocks the "1 unit" of weekly mineral is the amount
-        # needed to produce baseline_gwh_wk of cells.
         flows["lithium_out"]  = cell_fraction
         flows["graphite_out"] = cell_fraction
 
-        # Cobalt depends on NMC fraction; weighted average across makers
-        nmc_weighted_output = sum(
-            a.output_gwh * a.nmc_fraction for a in self._cell_agents.values()
+        # Cobalt consumption weighted by NMC fraction (LFP cells use no cobalt)
+        nmc_gwh = sum(a.output_gwh * a.nmc_fraction for a in self._cell_agents.values())
+        lfp_gwh = sum(a.output_gwh * a.lfp_fraction for a in self._cell_agents.values())
+        _nmc_baseline_frac = sum(
+            cfg["market_share"] * cfg["nmc_fraction"] for cfg in CELL_MAKERS.values()
+        )  # ≈ 0.597
+        nmc_baseline     = baseline_gwh_wk * _nmc_baseline_frac
+        # Cobalt outflow: reflect SD chemistry mix (lfp_share) so price signal
+        # feeds back into cobalt consumption — the F2 chemistry loop.
+        sd_nmc_share     = 1.0 - self.sd.lfp_share
+        effective_cobalt_out = (nmc_gwh / max(nmc_baseline, 1e-9)) * sd_nmc_share / max(_nmc_baseline_frac, 1e-9)
+        flows["cobalt_out"]   = max(0.0, effective_cobalt_out)
+
+        # REE outflow — proportional to motor production
+        motor_agent = self._tier1_agents["motor"]
+        total_motor_k = motor_agent.output_k
+        base_ree_dep = max(TIER1["motor"]["pmsm_fraction"], 1e-9)
+        ree_price = self.sd.prices.get("ree", 1.0)
+        substitution = min(0.80, max(0.0, (ree_price - 1.0) * 0.75))
+        effective_ree_dep = max(
+            0.12,
+            motor_agent.input_dependency * (1.0 - substitution),
         )
-        # Weighted NMC fraction at baseline: sum(market_share × nmc_fraction)
-        _nmc_weighted_frac = sum(
-            cfg["market_share"] * cfg["nmc_fraction"]
-            for cfg in CELL_MAKERS.values()
-        )  # ≈ 0.611
-        nmc_baseline = baseline_gwh_wk * _nmc_weighted_frac
-        flows["cobalt_out"] = nmc_weighted_output / max(nmc_baseline, 1e-9)
+        flows["ree_out"] = (
+            total_motor_k / max(BASELINE_WK["motors"], 1e-9)
+        ) * (effective_ree_dep / base_ree_dep)
 
-        # REE consumed by motor production
-        total_motor_k = self._tier1_agents["motor"].output_k
-        baseline_motor = BASELINE_WK["motors"]
-        flows["ree_out"] = total_motor_k / max(baseline_motor, 1e-9)
-
-        # SiC consumed by inverter production (only SiC-fraction)
-        total_inv_k = self._tier1_agents["inverter"].output_k
-        sic_dep     = TIER1["inverter"]["sic_dependency"]
+        # SiC outflow — SiC-fraction of inverter production
+        total_inv_k     = self._tier1_agents["inverter"].output_k
+        sic_dep         = TIER1["inverter"]["sic_dependency"]
         flows["sic_wafer_out"] = (total_inv_k * sic_dep) / max(
             BASELINE_WK["inverters"] * sic_dep, 1e-9
         )
 
-        # ── Cell flows (absolute GWh) ─────────────────────────────────────────
+        # ── Tier 2: Cell inventory flows (GWh) ───────────────────────────────
+        # Average kWh/vehicle: 822 GWh/yr ÷ 14 000 k veh/yr = 58.7 kWh/veh
+        _kwh_per_veh     = 58.7
         flows["cells_in"]  = total_cell_gwh
-        flows["cells_out"] = self._tier1_agents["battery_pack"].output_k * (
-            58.7 / 1000.0
-        )  # 58.7 kWh avg (822 GWh/yr ÷ 14000k veh/yr) × k vehicles → GWh
+        flows["cells_out"] = self._tier1_agents["battery_pack"].output_k * (_kwh_per_veh / 1000.0)
 
-        # ── Component flows (k vehicle-equiv) ────────────────────────────────
-        total_oem_prod = sum(
-            a.production_k for a in self._oem_agents.values()
+        # New: per-chemistry cell production for SD chemistry tracking
+        flows["lfp_gwh"]  = lfp_gwh
+        flows["nmc_gwh"]  = nmc_gwh
+
+        # New: total cell capacity (agents expand weekly; sum for SD sync)
+        flows["cell_capacity_gwh_yr"] = sum(
+            a.weekly_capacity * 52.0 for a in self._cell_agents.values()
         )
-        for comp in ("packs", "inverters", "motors", "harness"):
-            agent_key = {
-                "packs":     "battery_pack",
-                "inverters": "inverter",
-                "motors":    "motor",
-                "harness":   "harness",
-            }[comp]
+
+        # ── Tier 3: Component inventory flows (k vehicle-equiv) ───────────────
+        total_oem_prod = sum(a.production_k for a in self._oem_agents.values())
+        for comp, agent_key in {
+            "packs":     "battery_pack",
+            "inverters": "inverter",
+            "motors":    "motor",
+            "harness":   "harness",
+        }.items():
             flows[f"{comp}_in"]  = self._tier1_agents[agent_key].output_k
-            flows[f"{comp}_out"] = total_oem_prod   # each OEM consumes 1 per vehicle
+            flows[f"{comp}_out"] = total_oem_prod  # 1 of each per vehicle assembled
+
+        # New: order rate = sum of pipeline additions by Tier-1 agents (bullwhip)
+        flows["order_rate_k"] = sum(
+            a.pipeline[-1] if a.pipeline else 0.0
+            for a in self._tier1_agents.values()
+        )
+
+        # ── Copper: exogenous steady-state (no ABM agent; harness dependency) ───
+        # Provides a stable copper balance so the SD copper stock remains near
+        # target.  A future copper disruption scenario can override copper_in.
+        total_harness_k = self._tier1_agents["harness"].output_k
+        flows["copper_in"]  = total_harness_k / max(BASELINE_WK["harness"], 1e-9)
+        flows["copper_out"] = flows["copper_in"]   # steady-state; net change = 0
+
+        # ── Tier 4: Demand and backlog aggregates ─────────────────────────────
+        flows["total_oem_prod_k"]   = total_oem_prod
+        total_demand_k              = sum(
+            mkt.weekly_demand_k_veh for mkt in self._market_agents.values()
+        )
+        flows["total_demand_k"]     = total_demand_k
+        flows["total_demand_gwh_wk"]= sum(
+            mkt.weekly_demand_gwh for mkt in self._market_agents.values()
+        )
 
         return flows
 
@@ -427,38 +548,62 @@ class EVSupplyChainModel:
     # =========================================================================
 
     def _record_metrics(self) -> None:
-        total_cell_gwh = sum(
-            a.output_gwh for a in self._cell_agents.values()
-        )
-        total_prod_k = sum(
-            a.production_k for a in self._oem_agents.values()
-        )
-        total_demand_gwh = sum(
-            a.weekly_demand_gwh for a in self._market_agents.values()
-        )
-        total_backlog = sum(
-            a.backlog_k for a in self._oem_agents.values()
-        )
+        total_cell_gwh  = sum(a.output_gwh    for a in self._cell_agents.values())
+        total_prod_k    = sum(a.production_k  for a in self._oem_agents.values())
+        total_demand_gwh= sum(a.weekly_demand_gwh for a in self._market_agents.values())
+        total_backlog   = sum(a.backlog_k     for a in self._oem_agents.values())
 
         row: Dict[str, Any] = {
-            "week":              self.week,
+            "week":                self.week,
+            "focus_region":        self.focus_region or "global",
+            "active_oem_target_k": self.active_oem_target_k,
+            "active_market_gwh_2023": self.active_market_gwh_2023,
             "cell_production_gwh": total_cell_gwh,
-            "oem_production_k":  total_prod_k,
-            "market_demand_gwh": total_demand_gwh,
-            "total_backlog_k":   total_backlog,
-            "price_signal":      self.get_price_signal(),
+            "oem_production_k":    total_prod_k,
+            "market_demand_gwh":   total_demand_gwh,
+            "total_backlog_k":     total_backlog,
+            # SD-derived vehicle-facing price signal
+            "price_signal":        self.get_price_signal(),
+            "raw_price_signal":    self.sd.raw_price_signal,
         }
 
         # Per-OEM production
         for name, a in self._oem_agents.items():
             row[f"oem_{name}_k"] = a.production_k
 
-        # SD stock weeks-of-supply
-        for stock in ("lithium", "cobalt", "graphite",
-                      "ree", "sic_wafer", "cells", "harness"):
+        # SD inventory stocks — weeks of supply (all tiers, incl. copper)
+        for stock in ("lithium", "cobalt", "graphite", "ree", "sic_wafer", "copper",
+                      "cells", "packs", "inverters", "motors", "harness"):
             row[f"stock_{stock}_wk"] = self.sd.weeks_of_supply(stock)
 
-        # Tier-1 output
+        # SD Tier 1 price indices (incl. copper)
+        for mineral in ("lithium", "cobalt", "graphite", "ree", "sic_wafer", "copper"):
+            row[f"price_{mineral}"] = self.sd.prices.get(mineral, 1.0)
+
+        # SD component price indices from the report-based price module
+        for name, value in self.sd.component_prices.items():
+            row[f"price_component_{name}"] = value
+        component_cost = (
+            0.72 * self.sd.component_prices.get("pack", 1.0)
+            + 0.08 * self.sd.component_prices.get("inverter", 1.0)
+            + 0.12 * self.sd.component_prices.get("motor", 1.0)
+            + 0.08 * self.sd.component_prices.get("harness", 1.0)
+        )
+        row["oem_price_margin_signal"] = (
+            self.sd.component_prices.get("vehicle", 1.0) / max(component_cost, 1e-9)
+        )
+
+        # SD Tier 2 cell capacity & chemistry (new)
+        row["cell_capacity_gwh_yr"] = self.sd.cell_capacity
+        row["cell_cap_util"]        = self.sd.cell_capacity_utilisation_exact(total_cell_gwh)
+        row["lfp_share"]            = self.sd.lfp_share
+
+        # SD Tier 4 demand & backlog (new)
+        row["sd_ev_demand_gwh_yr"]  = self.sd.ev_demand_gwh_yr
+        row["sd_oem_backlog_k"]     = self.sd.oem_backlog_k
+        row["bullwhip_index"]       = self.sd.bullwhip_index
+
+        # Tier-1 subsystem output
         for comp, a in self._tier1_agents.items():
             row[f"t1_{comp}_k"] = a.output_k
 
@@ -467,6 +612,38 @@ class EVSupplyChainModel:
     def get_results(self) -> pd.DataFrame:
         """Return simulation history as a tidy DataFrame."""
         return pd.DataFrame(self._records)
+
+    def get_calibration_summary(self) -> pd.DataFrame:
+        """
+        Return a DataFrame showing the financial calibration applied to each
+        agent: which listed companies were matched, coverage percentage, and
+        the resulting multipliers.
+
+        Useful for auditing how much of the calibration is data-driven vs.
+        defaulting to 1.0 (no financial data found).
+        """
+        return coverage_report()
+
+    def get_tier_calibration(self) -> pd.DataFrame:
+        """
+        Return aggregate calibration multipliers by supply-chain tier, showing
+        how the listed-company financial data shapes each tier's behaviour.
+        """
+        from .financial_profiles import profile_for_tier
+        rows = []
+        for tier_label, agent_ids in FOUR_TIER_AGENT_GROUPS.items():
+            p = profile_for_tier(tier_label)
+            rows.append({
+                "tier":                tier_label,
+                "agents":              len(agent_ids),
+                "matched_companies":   "; ".join(p.company_names[:5])
+                                       + ("…" if len(p.company_names) > 5 else ""),
+                "recovery_multiplier": round(p.recovery_multiplier, 3),
+                "inventory_multiplier":round(p.inventory_multiplier, 3),
+                "growth_multiplier":   round(p.growth_multiplier, 3),
+                "shock_absorption":    round(p.shock_absorption, 3),
+            })
+        return pd.DataFrame(rows)
 
     def get_shock_summary(self) -> Dict[str, Any]:
         """Key disruption metrics for scenario comparison."""

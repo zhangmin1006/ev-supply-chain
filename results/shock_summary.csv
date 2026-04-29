@@ -1,8 +1,10 @@
 Scenario,Avg production (k/wk),Peak loss (%),Mean loss (%),Weeks below 90%,Recovery week,Cumulative loss (k veh)
-ukraine_harness,257.8,64.1,5.9,32,40,4211.0
-compound_shock,257.8,62.8,5.9,32,40,4211.0
-china_graphite,253.0,36.6,7.6,50,77,5604.0
-china_ree_restriction,233.3,35.1,14.8,115,177,10557.0
-us_china_tariff,221.4,28.9,19.2,182,260,13688.0
-drc_cobalt,264.7,28.3,3.4,23,73,2438.0
-sic_bottleneck,256.3,27.3,6.5,98,150,6916.0
+uk_supply_chain_friction,8.7,60.6,1.8,128,128,41.0
+ukraine_harness,8.8,57.9,0.0,128,128,0.0
+drc_cobalt,8.8,57.9,0.0,128,128,0.0
+china_ree_restriction,8.8,57.9,0.0,128,128,0.0
+sic_bottleneck,8.8,57.9,0.0,128,128,0.0
+compound_shock,8.8,57.9,0.0,128,128,0.0
+us_china_tariff,8.8,57.9,0.0,128,128,0.0
+china_catl_disruption,8.8,57.9,0.0,128,128,0.0
+china_graphite,8.8,57.9,0.0,128,128,0.0

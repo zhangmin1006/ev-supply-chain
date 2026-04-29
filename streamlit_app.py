@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
-    page_title="EV Supply Chain Intelligence",
+    page_title="UK EV Supply Chain Intelligence",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -112,7 +112,9 @@ def load_or_run():
     json_path = os.path.join(os.path.dirname(__file__), "results", "simulation_data.json")
     if os.path.exists(json_path):
         with open(json_path) as f:
-            return json.load(f)
+            cached = json.load(f)
+        if cached.get("baseline", {}).get("focus_region", [""])[0] == "uk":
+            return cached
 
     # Fallback: run simulation
     sys.path.insert(0, os.path.dirname(__file__))

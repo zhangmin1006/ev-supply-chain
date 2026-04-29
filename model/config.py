@@ -375,32 +375,146 @@ OEMS = {
 # UK YoY growth: SMMT 2024 shows +18% BEV in 2023; policy tailwinds (ZEV mandate
 # from 2024: 22% of new car sales must be zero emission) accelerate to ~28%/yr.
 MARKETS = {
-    "china":   {"gwh_2023": 493, "yoy": 0.33, "avg_kwh_veh": 62},
+    "china":   {
+        "gwh_2023": 493, "yoy": 0.33, "avg_kwh_veh": 62,
+        "price_elasticity": -0.26, "backlog_sensitivity": 0.35,
+        "availability_floor": 0.58,
+    },
     # Europe excl. UK: Germany, France, Norway, Netherlands, etc.
-    "europe":  {"gwh_2023": 127, "yoy": 0.11, "avg_kwh_veh": 68},
+    "europe":  {
+        "gwh_2023": 127, "yoy": 0.11, "avg_kwh_veh": 68,
+        "price_elasticity": -0.34, "backlog_sensitivity": 0.55,
+        "availability_floor": 0.48,
+    },
     # UK: split from Europe; ZEV mandate (2024) drives faster growth than EU average
     # Source: SMMT EV Registration Data 2024; UK DfT ZEV mandate consultation 2023
-    "uk":      {"gwh_2023":  20, "yoy": 0.28, "avg_kwh_veh": 65},
-    "usa":     {"gwh_2023": 104, "yoy": 0.35, "avg_kwh_veh": 85},
+    "uk":      {
+        "gwh_2023":  20, "yoy": 0.28, "avg_kwh_veh": 65,
+        "price_elasticity": -0.36, "backlog_sensitivity": 0.60,
+        "availability_floor": 0.46,
+    },
+    "usa":     {
+        "gwh_2023": 104, "yoy": 0.35, "avg_kwh_veh": 85,
+        "price_elasticity": -0.38, "backlog_sensitivity": 0.55,
+        "availability_floor": 0.48,
+    },
     # Japan/Korea row separated from rest-of-world for Japanese OEM demand routing
     # IEA GEO 2024: Japan+Korea ~14 GWh combined; ~6% YoY
-    "japan":   {"gwh_2023":  14, "yoy": 0.06, "avg_kwh_veh": 48},
+    "japan":   {
+        "gwh_2023":  14, "yoy": 0.06, "avg_kwh_veh": 48,
+        "price_elasticity": -0.22, "backlog_sensitivity": 0.40,
+        "availability_floor": 0.60,
+    },
     # Residual ROW adjusted: 78 − 14 = 64 GWh (SE Asia, Middle East, LatAm)
-    "row":     {"gwh_2023":  64, "yoy": 0.42, "avg_kwh_veh": 55},
+    "row":     {
+        "gwh_2023":  64, "yoy": 0.42, "avg_kwh_veh": 55,
+        "price_elasticity": -0.42, "backlog_sensitivity": 0.68,
+        "availability_floor": 0.43,
+    },
 }
 
 DEMAND_PRICE_ELASTICITY = -0.30   # % demand change per 1% price rise (IEA 2023)
 
-# ── SD model initial conditions ───────────────────────────────────────────────
-# Each stock is initialised at its target safety-stock level
-# (= baseline weekly throughput × safety_stock_weeks)
-# These are derived from MINERALS / TIER1 / CELL_MAKERS above;
-# the SDModel computes them at initialisation.
+# ── SD model parameters (four-tier redesign) ──────────────────────────────────
 
 # Adjustment factor: how strongly a stock shortfall constrains downstream
 # production.  1.0 = proportional (linear); >1 = amplified; <1 = dampened.
-LEONTIEF_STRICTNESS = 1.0   # keep linear for first version
+LEONTIEF_STRICTNESS = 1.0
 
 # Bullwhip amplification: each tier over-orders by this fraction when
 # stock falls below target.  Empirically 1.2–1.5 in automotive (Lee 1997).
 BULLWHIP_FACTOR = 1.25
+
+# ── SD Tier 1: Commodity price dynamics ──────────────────────────────────────
+# Price adjusts toward supply/demand equilibrium at PRICE_ADJ_SPEED per week.
+# Calibration: Li₂CO₃ roughly doubled in price over ~20 weeks during 2021 surge
+# → 1/20 ≈ 0.05 per week.  Same first-order lag assumed for all minerals.
+# Source: Benchmark Mineral Intelligence lithium price series 2021-22.
+SD_PRICE_ADJ_SPEED = 0.05    # fraction of gap closed per week
+SD_PRICE_FLOOR     = 0.10    # absolute price floor (avoids numeric issues)
+SD_PRICE_CEILING   = 6.00    # cap at 6× baseline (extreme stress)
+
+# ── SD Tier 2: Cell capacity investment ───────────────────────────────────────
+# Nameplate global cell capacity 2023 (BNEF Battery Market Outlook 2023).
+SD_CELL_CAPACITY_2023_GWH_YR = 1_500.0
+
+# Gigafactory build time: Tesla, CATL, LG ES new plants typically 2–3 years
+# from groundbreaking to first production.  Using 2 years (104 weeks) as base.
+# Source: BNEF Gigafactory Tracker 2023; company press releases.
+SD_CELL_CAPACITY_BUILD_WK = 104
+
+# Investment trigger: invest when utilisation exceeds this threshold.
+# 85% utilisation is the industry rule of thumb before expansion begins.
+SD_CAPEX_TRIGGER_UTIL = 0.85
+
+# ── SD Tier 2: Chemistry mix dynamics ────────────────────────────────────────
+# LFP share 2023: computed from CELL_MAKERS chemistry mix weighted by
+# market share.  CATL (37% share, 45% LFP) + BYD (14%, 90% LFP) + ...
+# = approximately 40.3% of global deployed GWh is LFP.
+# Source: IEA GEO 2024; BNEF Battery Cell Chemistry Report 2023.
+SD_LFP_SHARE_2023 = 0.403
+
+# Chemistry shift speed: fraction of gap to LFP target closed per week.
+# At 0.003/wk, full shift from 40% → 88% LFP takes ~160 weeks (~3 years).
+# Consistent with observed industry transition rates (CATL flagged 2022-24).
+SD_CHEM_SHIFT_SPEED = 0.003
+
+# Cobalt price thresholds for chemistry substitution incentive.
+# Below LOW: weak pressure to switch (NMC remains competitive).
+# Above HIGH: strong incentive to maximise LFP (full substitution target).
+SD_COBALT_SWITCH_LOW  = 0.80   # 80% of 2023 baseline price
+SD_COBALT_SWITCH_HIGH = 1.50   # 150% of 2023 baseline price
+
+# ── Behavioural archetype assignments ─────────────────────────────────────────
+# Maps agent_id → archetype class name.  Agents not listed use the base class.
+
+MINERAL_AGENT_ARCHETYPES: dict = {
+    # StateBacked: state mandate prevents output below production_floor
+    "graphite_chn":  "StateBacked",
+    "cobalt_other":  "StateBacked",
+    "ree_chn":       "StateBacked",
+    "sic_china":     "StateBacked",
+    # WesternMiner: market-driven, moderate price sensitivity
+    "lithium_aus":   "WesternMiner",
+    "lithium_chl":   "WesternMiner",
+    "cobalt_drc":    "WesternMiner",
+    "sic_coherent":  "WesternMiner",
+    "sic_other":     "WesternMiner",
+    # GreenfieldBuilder: debt-service must-run (near-full utilisation)
+    "lithium_other": "GreenfieldBuilder",
+    "ree_other":     "GreenfieldBuilder",
+    "sic_wolfspeed": "GreenfieldBuilder",
+}
+
+CELL_AGENT_ARCHETYPES: dict = {
+    # PlatformLeader: scale + balance-sheet strength
+    "catl":         "PlatformLeader",
+    "byd_cells":    "PlatformLeader",
+    # HyperScaleChallenger: high growth, thin balance sheet
+    "calb":         "HyperScaleChallenger",
+    "others_cells": "HyperScaleChallenger",
+    # IncumbentUnderPressure: NMC-heavy, losing share
+    "lg_es":        "IncumbentUnderPressure",
+    "panasonic":    "IncumbentUnderPressure",
+    "samsung_sdi":  "IncumbentUnderPressure",
+    "sk_on":        "IncumbentUnderPressure",
+}
+
+TIER1_AGENT_ARCHETYPES: dict = {
+    "inverter":     "PremiumPowerElectronics",
+    "motor":        "EstablishedVolumeSupplier",
+    "harness":      "EstablishedVolumeSupplier",
+    "battery_pack": "BatteryPackIntegrator",
+}
+
+OEM_AGENT_ARCHETYPES: dict = {
+    # ProfitableEstablishedOEM: profitable, stable, large buffer
+    "korean_oem":        "ProfitableEstablishedOEM",
+    "japanese_oem":      "ProfitableEstablishedOEM",
+    # TransitioningLegacyOEM: ICE→EV incumbents under cost pressure
+    "german_oem":        "TransitioningLegacyOEM",
+    "us_oem":            "TransitioningLegacyOEM",
+    "uk_oem":            "TransitioningLegacyOEM",
+    # EVNativeScaleAspirant: lean, high-growth Chinese EV brands
+    "other_chinese_oem": "EVNativeScaleAspirant",
+}

@@ -115,7 +115,18 @@ def build_summary(results: dict[str, pd.DataFrame],
             "Cumulative loss (k veh)":round(cum_loss, 0),
         })
 
-    return pd.DataFrame(rows).sort_values("Peak loss (%)", ascending=False)
+    columns = [
+        "Scenario",
+        "Avg production (k/wk)",
+        "Peak loss (%)",
+        "Mean loss (%)",
+        "Weeks below 90%",
+        "Recovery week",
+        "Cumulative loss (k veh)",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns).sort_values("Peak loss (%)", ascending=False)
 
 
 # =============================================================================
