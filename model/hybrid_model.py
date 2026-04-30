@@ -38,6 +38,7 @@ from .config import (
 from .sd_model import SDModel, BASELINE_WK
 from .financial_profiles import profile_for_agent, coverage_report, FOUR_TIER_AGENT_GROUPS
 from .data_source_calibration import apply_data_source_calibration
+from .policies import apply_policy_packages
 from .agents import (
     MineralSupplierAgent, CellManufacturerAgent,
     Tier1SupplierAgent, OEMAgent, MarketAgent,
@@ -120,6 +121,10 @@ class EVSupplyChainModel:
         self.n_weeks  = n_weeks
         self.week     = 0
         self.focus_region = focus_region
+        self.policy_packages: List[str] = []
+        self.policy_notes: List[str] = []
+        self.policy_shock_mitigation: Dict[str, float] = {}
+        self.policy_mineral_supply_boost: Dict[str, float] = {}
         self._active_oem_names = [
             name for name, cfg in OEMS.items()
             if focus_region is None or cfg["region"] == focus_region
@@ -162,6 +167,7 @@ class EVSupplyChainModel:
         self._build_tier1_agents()
         self._build_oem_agents()
         self._build_market_agents()
+        apply_policy_packages(self, self.scenario.get("policies", []))
 
         # ── Shock schedule {week: [shock_dict, …]} ───────────────────────────
         self._shock_schedule: Dict[int, List[Dict]] = {}
@@ -315,7 +321,8 @@ class EVSupplyChainModel:
                 continue
 
             target   = shock["target"]
-            severity = shock.get("severity", 0.5)
+            mitigation = self.policy_shock_mitigation.get(target, 0.0)
+            severity = shock.get("severity", 0.5) * max(0.0, 1.0 - mitigation)
             agent    = self._find_agent(target)
             if agent:
                 agent.apply_shock(severity)
@@ -427,6 +434,7 @@ class EVSupplyChainModel:
                 for a in self._mineral_agents.values()
                 if a.mineral == mineral
             )
+            flows[f"{mineral}_in"] *= self.policy_mineral_supply_boost.get(mineral, 1.0)
 
         # ── Tier 1: Mineral outflows (as fraction of baseline weekly demand) ──
         total_cell_gwh  = sum(a.output_gwh for a in self._cell_agents.values())
@@ -571,6 +579,7 @@ class EVSupplyChainModel:
         row: Dict[str, Any] = {
             "week":                self.week,
             "focus_region":        self.focus_region or "global",
+            "policy_packages":      "+".join(self.policy_packages) if self.policy_packages else "none",
             "active_oem_target_k": self.active_oem_target_k,
             "active_market_gwh_2023": self.active_market_gwh_2023,
             "cell_production_gwh": total_cell_gwh,

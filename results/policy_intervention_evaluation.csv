@@ -1,0 +1,25 @@
+base_scenario,policy_package,policy_scenario,shock_only_cumulative_loss_k,policy_cumulative_loss_k,avoided_loss_k_veh,avoided_loss_pct,shock_only_peak_loss_pct,policy_peak_loss_pct,peak_loss_reduction_pct_pt,shock_only_weeks_below_90pct,policy_weeks_below_90pct,shock_only_max_backlog_k,policy_max_backlog_k,shock_only_avg_output_k_wk,policy_avg_output_k_wk
+uk_supply_chain_friction,Full Industrial Strategy Package,uk_supply_chain_friction_full_policy,37.835,2.479,35.356,93.448,8.011,4.306,3.705,0,0,139.091,105.898,8.683,9.755
+uk_supply_chain_friction,Tier-1 Resilience Package,uk_supply_chain_friction_tier1_policy,37.835,7.314,30.521,80.669,8.011,5.475,2.536,0,0,139.091,117.932,8.683,9.388
+uk_supply_chain_friction,Critical Minerals Security Package,uk_supply_chain_friction_minerals_policy,37.835,37.579,0.256,0.677,8.011,7.994,0.017,0,0,139.091,139.094,8.683,8.684
+ukraine_harness,Tier-1 Resilience Package,ukraine_harness_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+ukraine_harness,Full Industrial Strategy Package,ukraine_harness_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+drc_cobalt,Tier-1 Resilience Package,drc_cobalt_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+drc_cobalt,Full Industrial Strategy Package,drc_cobalt_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+sic_bottleneck,Tier-1 Resilience Package,sic_bottleneck_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+sic_bottleneck,Full Industrial Strategy Package,sic_bottleneck_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+china_ree_restriction,Tier-1 Resilience Package,china_ree_restriction_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+china_ree_restriction,Full Industrial Strategy Package,china_ree_restriction_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+china_graphite,Tier-1 Resilience Package,china_graphite_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+china_graphite,Full Industrial Strategy Package,china_graphite_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+china_catl_disruption,Tier-1 Resilience Package,china_catl_disruption_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+china_catl_disruption,Full Industrial Strategy Package,china_catl_disruption_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+compound_shock,Tier-1 Resilience Package,compound_shock_tier1_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,106.927,8.829,9.517
+compound_shock,Full Industrial Strategy Package,compound_shock_full_policy,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,124.745,96.392,8.829,9.874
+ukraine_harness,Critical Minerals Security Package,ukraine_harness_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+drc_cobalt,Critical Minerals Security Package,drc_cobalt_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+sic_bottleneck,Critical Minerals Security Package,sic_bottleneck_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+china_ree_restriction,Critical Minerals Security Package,china_ree_restriction_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+china_graphite,Critical Minerals Security Package,china_graphite_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+china_catl_disruption,Critical Minerals Security Package,china_catl_disruption_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83
+compound_shock,Critical Minerals Security Package,compound_shock_minerals_policy,0.0,0.046,-0.046,-4600000000.0,0.0,0.064,-0.064,0,0,124.745,124.741,8.829,8.83

@@ -75,6 +75,7 @@ class Agent:
         self.data_source_calibration = None
         self.data_source_note = ""
         self.data_source_shock_absorption = 0.0
+        self.policy_shock_absorption = 0.0
 
     def _effective_shock_severity(self, severity: float) -> float:
         # Archetype override takes priority over financial-profile calibration.
@@ -82,7 +83,12 @@ class Agent:
                            if self._shock_absorption_override is not None
                            else self.financial_profile.shock_absorption)
         source_absorption = max(0.0, min(0.50, self.data_source_shock_absorption))
-        absorption = 1.0 - ((1.0 - base_absorption) * (1.0 - source_absorption))
+        policy_absorption = max(0.0, min(0.50, self.policy_shock_absorption))
+        absorption = 1.0 - (
+            (1.0 - base_absorption)
+            * (1.0 - source_absorption)
+            * (1.0 - policy_absorption)
+        )
         return max(0.0, min(1.0, severity * (1.0 - absorption)))
 
     def _sd_price_signal(self) -> float:

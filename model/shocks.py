@@ -31,6 +31,7 @@ Target agent IDs
 """
 
 from __future__ import annotations
+import copy
 from typing import Dict, Any
 
 
@@ -332,6 +333,51 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         ],
     },
 }
+
+
+POLICY_SCENARIO_SOURCES = (
+    "uk_supply_chain_friction",
+    "ukraine_harness",
+    "drc_cobalt",
+    "sic_bottleneck",
+    "china_ree_restriction",
+    "china_graphite",
+    "china_catl_disruption",
+    "compound_shock",
+)
+
+
+def _with_policy(base_name: str, policy_name: str, suffix: str, label: str) -> Dict[str, Any]:
+    base = copy.deepcopy(SCENARIOS[base_name])
+    return {
+        "name": f"{base_name}_{suffix}",
+        "description": f"{base['description']} + {label}",
+        "shocks": base.get("shocks", []),
+        "policies": [policy_name],
+        "base_scenario": base_name,
+        "policy_label": label,
+    }
+
+
+for _base_name in POLICY_SCENARIO_SOURCES:
+    SCENARIOS[f"{_base_name}_tier1_policy"] = _with_policy(
+        _base_name,
+        "tier1_resilience",
+        "tier1_policy",
+        "Tier-1 Resilience Package",
+    )
+    SCENARIOS[f"{_base_name}_minerals_policy"] = _with_policy(
+        _base_name,
+        "critical_minerals_security",
+        "minerals_policy",
+        "Critical Minerals Security Package",
+    )
+    SCENARIOS[f"{_base_name}_full_policy"] = _with_policy(
+        _base_name,
+        "full_industrial_strategy",
+        "full_policy",
+        "Full Industrial Strategy Package",
+    )
 
 
 def get_scenario(name: str) -> Dict[str, Any]:

@@ -9,6 +9,7 @@ Deploy:        Streamlit Community Cloud → https://share.streamlit.io
 import json
 import os
 import sys
+import copy
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -89,9 +90,10 @@ OEM_LABELS = {
 
 WEEKS = list(range(260))
 YEAR_TICKS = {0: "Yr 1", 52: "Yr 2", 104: "Yr 3", 156: "Yr 4", 208: "Yr 5"}
-DATA_SCHEMA_VERSION = "uk-focus-v4"
+DATA_SCHEMA_VERSION = "uk-focus-v5"
 REQUIRED_DATA_KEYS = {
     "focus_region",
+    "policy_packages",
     "oem_production_k",
     "oem_uk_oem_k",
     "t1_battery_pack_k",
@@ -196,6 +198,158 @@ def compute_summary(data):
     return pd.DataFrame(rows).sort_values("Peak_loss", ascending=False)
 
 
+def load_validation_results():
+    """Read generated validation artifacts for display in the app."""
+    results_dir = os.path.join(os.path.dirname(__file__), "results")
+    checks_path = os.path.join(results_dir, "validation_checks.csv")
+    metrics_path = os.path.join(results_dir, "validation_scenario_metrics.csv")
+    report_path = os.path.join(results_dir, "validation_report.md")
+
+    checks = pd.DataFrame()
+    metrics = pd.DataFrame()
+    report = ""
+    modified = None
+
+    if os.path.exists(checks_path):
+        checks = pd.read_csv(checks_path)
+        modified = os.path.getmtime(checks_path)
+    if os.path.exists(metrics_path):
+        metrics = pd.read_csv(metrics_path)
+        modified = max(modified or 0, os.path.getmtime(metrics_path))
+    if os.path.exists(report_path):
+        with open(report_path, encoding="utf-8") as f:
+            report = f.read()
+        modified = max(modified or 0, os.path.getmtime(report_path))
+
+    return checks, metrics, report, modified
+
+
+def load_policy_evaluation():
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "results",
+        "policy_intervention_evaluation.csv",
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame(), None
+    return pd.read_csv(path), os.path.getmtime(path)
+
+
+def _annual_growth_to_weekly(rate: float) -> float:
+    return (1.0 + rate) ** (1.0 / 52.0) - 1.0
+
+
+@st.cache_data(show_spinner="Running custom parameter experiment...")
+def run_custom_parameter_experiment(params: dict):
+    """Run one scenario with user-adjusted ABM and SD parameters."""
+    sys.path.insert(0, os.path.dirname(__file__))
+    import model.config as cfg
+    import model.sd_model as sd
+    import model.agents as agents
+    import model.hybrid_model as hm
+    from model.shocks import SCENARIOS
+
+    orig_cfg = {
+        "MARKETS": copy.deepcopy(cfg.MARKETS),
+        "OEMS": copy.deepcopy(cfg.OEMS),
+        "TIER1": copy.deepcopy(cfg.TIER1),
+        "BULLWHIP_FACTOR": cfg.BULLWHIP_FACTOR,
+    }
+    orig_sd = {
+        "MEAS_LAG_WK": sd.MEAS_LAG_WK,
+        "PRICE_ADJ_SPEED": sd.PRICE_ADJ_SPEED,
+        "PRICE_ALPHA": sd.PRICE_ALPHA,
+        "CHEM_SHIFT_SPEED": sd.CHEM_SHIFT_SPEED,
+        "CAPEX_TRIGGER_UTIL": sd.CAPEX_TRIGGER_UTIL,
+        "MINERAL_TRANSPORT_WK": copy.deepcopy(sd.MINERAL_TRANSPORT_WK),
+        "MINERAL_SUPPLY_VOL": copy.deepcopy(sd.MINERAL_SUPPLY_VOL),
+        "MINERAL_SUPPLY_GROWTH_WK": copy.deepcopy(sd.MINERAL_SUPPLY_GROWTH_WK),
+    }
+    orig_agents = {
+        "_CELL_GROWTH_WK": agents._CELL_GROWTH_WK,
+        "_TIER1_GROWTH_WK": agents._TIER1_GROWTH_WK,
+    }
+    orig_hm = {"BULLWHIP_FACTOR": hm.BULLWHIP_FACTOR}
+
+    try:
+        cfg.MARKETS["uk"]["gwh_2023"] = float(params["uk_market_gwh"])
+        cfg.MARKETS["uk"]["yoy"] = float(params["uk_demand_growth"])
+        cfg.MARKETS["uk"]["price_elasticity"] = float(params["uk_price_elasticity"])
+        cfg.MARKETS["uk"]["backlog_sensitivity"] = float(params["uk_backlog_sensitivity"])
+        cfg.MARKETS["uk"]["availability_floor"] = float(params["uk_availability_floor"])
+
+        cfg.OEMS["uk_oem"]["annual_target_k"] = float(params["uk_oem_target_k"])
+        cfg.OEMS["uk_oem"]["safety_stock_weeks"] = float(params["uk_oem_safety_weeks"])
+        cfg.OEMS["uk_oem"]["vertical_integration"] = float(params["uk_vertical_integration"])
+
+        cfg.TIER1["harness"]["safety_stock_weeks"] = float(params["harness_safety_weeks"])
+        cfg.TIER1["harness"]["lead_time_weeks"] = int(params["harness_lead_time"])
+        cfg.TIER1["inverter"]["sic_dependency"] = float(params["sic_dependency"])
+        cfg.TIER1["motor"]["pmsm_fraction"] = float(params["ree_motor_dependency"])
+
+        cfg.BULLWHIP_FACTOR = float(params["bullwhip_factor"])
+        hm.BULLWHIP_FACTOR = float(params["bullwhip_factor"])
+
+        cell_growth_wk = _annual_growth_to_weekly(float(params["cell_capacity_growth"]))
+        tier1_growth_wk = _annual_growth_to_weekly(float(params["tier1_capacity_growth"]))
+        agents._CELL_GROWTH_WK = cell_growth_wk
+        agents._TIER1_GROWTH_WK = tier1_growth_wk
+
+        sd.MEAS_LAG_WK = max(1.0, float(params["measurement_lag_weeks"]))
+        sd.PRICE_ADJ_SPEED = float(params["price_adjustment_speed"])
+        sd.PRICE_ALPHA = float(params["price_scarcity_sensitivity"])
+        sd.CHEM_SHIFT_SPEED = float(params["lfp_shift_speed"])
+        sd.CAPEX_TRIGGER_UTIL = float(params["capex_trigger_util"])
+
+        sd.MINERAL_TRANSPORT_WK["cobalt"] = int(params["cobalt_transport_weeks"])
+        sd.MINERAL_TRANSPORT_WK["graphite"] = int(params["graphite_transport_weeks"])
+        sd.MINERAL_TRANSPORT_WK["ree"] = int(params["ree_transport_weeks"])
+        sd.MINERAL_TRANSPORT_WK["sic_wafer"] = int(params["sic_transport_weeks"])
+
+        sd.MINERAL_SUPPLY_VOL["cobalt"] = float(params["cobalt_supply_vol"])
+        sd.MINERAL_SUPPLY_VOL["graphite"] = float(params["graphite_supply_vol"])
+        sd.MINERAL_SUPPLY_VOL["ree"] = float(params["ree_supply_vol"])
+        sd.MINERAL_SUPPLY_VOL["sic_wafer"] = float(params["sic_supply_vol"])
+
+        sd.MINERAL_SUPPLY_GROWTH_WK["cobalt"] = _annual_growth_to_weekly(float(params["cobalt_supply_growth"]))
+        sd.MINERAL_SUPPLY_GROWTH_WK["graphite"] = _annual_growth_to_weekly(float(params["graphite_supply_growth"]))
+        sd.MINERAL_SUPPLY_GROWTH_WK["ree"] = _annual_growth_to_weekly(float(params["ree_supply_growth"]))
+        sd.MINERAL_SUPPLY_GROWTH_WK["sic_wafer"] = _annual_growth_to_weekly(float(params["sic_supply_growth"]))
+
+        scenario = SCENARIOS[params["scenario"]]
+        weeks = int(params["weeks"])
+        seed = int(params["seed"])
+
+        baseline = hm.EVSupplyChainModel(scenario=SCENARIOS["baseline"], seed=seed, n_weeks=weeks)
+        baseline.run(weeks)
+        custom = hm.EVSupplyChainModel(scenario=scenario, seed=seed, n_weeks=weeks)
+        custom.run(weeks)
+
+        return {
+            "baseline": baseline.get_results().to_dict(orient="list"),
+            "custom": custom.get_results().to_dict(orient="list"),
+            "calibration": custom.get_data_source_calibration_summary().to_dict(orient="records"),
+        }
+    finally:
+        cfg.MARKETS.clear(); cfg.MARKETS.update(orig_cfg["MARKETS"])
+        cfg.OEMS.clear(); cfg.OEMS.update(orig_cfg["OEMS"])
+        cfg.TIER1.clear(); cfg.TIER1.update(orig_cfg["TIER1"])
+        cfg.BULLWHIP_FACTOR = orig_cfg["BULLWHIP_FACTOR"]
+
+        sd.MEAS_LAG_WK = orig_sd["MEAS_LAG_WK"]
+        sd.PRICE_ADJ_SPEED = orig_sd["PRICE_ADJ_SPEED"]
+        sd.PRICE_ALPHA = orig_sd["PRICE_ALPHA"]
+        sd.CHEM_SHIFT_SPEED = orig_sd["CHEM_SHIFT_SPEED"]
+        sd.CAPEX_TRIGGER_UTIL = orig_sd["CAPEX_TRIGGER_UTIL"]
+        sd.MINERAL_TRANSPORT_WK.clear(); sd.MINERAL_TRANSPORT_WK.update(orig_sd["MINERAL_TRANSPORT_WK"])
+        sd.MINERAL_SUPPLY_VOL.clear(); sd.MINERAL_SUPPLY_VOL.update(orig_sd["MINERAL_SUPPLY_VOL"])
+        sd.MINERAL_SUPPLY_GROWTH_WK.clear(); sd.MINERAL_SUPPLY_GROWTH_WK.update(orig_sd["MINERAL_SUPPLY_GROWTH_WK"])
+
+        agents._CELL_GROWTH_WK = orig_agents["_CELL_GROWTH_WK"]
+        agents._TIER1_GROWTH_WK = orig_agents["_TIER1_GROWTH_WK"]
+        hm.BULLWHIP_FACTOR = orig_hm["BULLWHIP_FACTOR"]
+
+
 # ── Chart helpers ─────────────────────────────────────────────────────────────
 
 def line(fig, x, y, name, color, dash="solid", width=1.8, fill=False, row=None, col=None, showlegend=True):
@@ -266,9 +420,12 @@ st.markdown(
 )
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-T_OVERVIEW, T_SCENARIO, T_OEM, T_STOCKS, T_ARCHETYPES, T_MAP, T_MARKET, T_FOCUS = st.tabs([
+T_OVERVIEW, T_SCENARIO, T_PARAMETERS, T_POLICY, T_VALIDATION, T_OEM, T_STOCKS, T_ARCHETYPES, T_MAP, T_MARKET, T_FOCUS = st.tabs([
     "📊 Overview",
     "🔍 Scenario Analysis",
+    "Parameter Lab",
+    "Policy Evaluation",
+    "Validation",
     "🏭 UK OEM",
     "⛏️ Supply Chain Stocks",
     "🤖 Agent Archetypes",
@@ -424,7 +581,370 @@ with T_SCENARIO:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — OEM BREAKDOWN
+# TAB 3 — PARAMETER LAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with T_PARAMETERS:
+    st.subheader("ABM + SD Parameter Lab")
+    st.caption(
+        "Adjust estimated assumptions and run a fresh UK-focused simulation. "
+        "The main dashboard tabs continue to use the validated baseline cache."
+    )
+
+    with st.form("parameter_lab_form"):
+        c_top1, c_top2, c_top3 = st.columns(3)
+        with c_top1:
+            p_scenario = st.selectbox(
+                "Scenario",
+                options=SHOCK_SCS,
+                index=SHOCK_SCS.index("uk_supply_chain_friction") if "uk_supply_chain_friction" in SHOCK_SCS else 0,
+                format_func=lambda s: SC_LABELS[s],
+            )
+        with c_top2:
+            p_weeks = st.slider("Horizon (weeks)", 52, 260, 156, 26)
+        with c_top3:
+            p_seed = st.number_input("Random seed", min_value=1, max_value=9999, value=42, step=1)
+
+        st.markdown("**Demand and UK OEM assumptions**")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            p_uk_market = st.number_input("UK market demand 2023 (GWh)", 8.0, 60.0, 20.0, 1.0)
+            p_uk_growth = st.slider("UK demand growth (%/yr)", 0.0, 60.0, 28.0, 1.0) / 100.0
+        with c2:
+            p_uk_price_elasticity = st.slider("UK price elasticity", -0.80, -0.05, -0.36, 0.01)
+            p_uk_backlog_sens = st.slider("Backlog demand sensitivity", 0.00, 1.00, 0.60, 0.05)
+        with c3:
+            p_uk_availability_floor = st.slider("Availability floor", 0.10, 0.90, 0.46, 0.02)
+            p_uk_oem_target = st.number_input("UK OEM target (k vehicles/yr)", 50.0, 500.0, 175.0, 5.0)
+        with c4:
+            p_uk_oem_safety = st.slider("UK OEM safety stock (weeks)", 1.0, 12.0, 5.0, 0.5)
+            p_uk_vertical = st.slider("UK vertical integration", 0.00, 1.00, 0.05, 0.05)
+
+        st.markdown("**ABM supplier behavior**")
+        c5, c6, c7, c8 = st.columns(4)
+        with c5:
+            p_harness_safety = st.slider("Harness safety stock (weeks)", 0.5, 8.0, 2.0, 0.5)
+            p_harness_lead = st.slider("Harness lead time (weeks)", 1, 16, 6, 1)
+        with c6:
+            p_bullwhip = st.slider("Bullwhip factor", 0.50, 2.50, 1.25, 0.05)
+            p_tier1_growth = st.slider("Tier-1 capacity growth (%/yr)", 0.0, 60.0, 29.0, 1.0) / 100.0
+        with c7:
+            p_sic_dependency = st.slider("Inverter SiC dependency", 0.00, 1.00, 0.45, 0.05)
+            p_ree_dependency = st.slider("Motor REE dependency", 0.00, 1.00, 0.82, 0.05)
+        with c8:
+            p_cell_growth = st.slider("Cell capacity growth (%/yr)", 0.0, 80.0, 29.0, 1.0) / 100.0
+
+        st.markdown("**SD feedback and uncertainty assumptions**")
+        c9, c10, c11, c12 = st.columns(4)
+        with c9:
+            p_meas_lag = st.slider("Inventory measurement lag (weeks)", 1.0, 8.0, 2.0, 0.5)
+            p_price_speed = st.slider("Price adjustment speed", 0.01, 0.20, 0.05, 0.01)
+        with c10:
+            p_price_alpha = st.slider("Price scarcity sensitivity", 0.50, 4.00, 1.50, 0.10)
+            p_lfp_speed = st.slider("LFP shift speed (% gap/week)", 0.05, 1.00, 0.30, 0.05) / 100.0
+        with c11:
+            p_capex_trigger = st.slider("Cell capex trigger utilisation", 0.50, 0.98, 0.85, 0.01)
+            p_cobalt_transport = st.slider("Cobalt transport delay (weeks)", 1, 20, 8, 1)
+        with c12:
+            p_graphite_transport = st.slider("Graphite transport delay (weeks)", 1, 16, 4, 1)
+            p_ree_transport = st.slider("REE transport delay (weeks)", 1, 24, 10, 1)
+
+        c13, c14, c15, c16 = st.columns(4)
+        with c13:
+            p_sic_transport = st.slider("SiC transport delay (weeks)", 1, 16, 4, 1)
+            p_cobalt_vol = st.slider("Cobalt supply volatility", 0.00, 0.20, 0.07, 0.01)
+        with c14:
+            p_graphite_vol = st.slider("Graphite supply volatility", 0.00, 0.20, 0.03, 0.01)
+            p_ree_vol = st.slider("REE supply volatility", 0.00, 0.20, 0.05, 0.01)
+        with c15:
+            p_sic_vol = st.slider("SiC supply volatility", 0.00, 0.20, 0.03, 0.01)
+            p_cobalt_growth = st.slider("Cobalt supply growth (%/yr)", 0.0, 50.0, 5.0, 1.0) / 100.0
+        with c16:
+            p_graphite_growth = st.slider("Graphite supply growth (%/yr)", 0.0, 60.0, 15.0, 1.0) / 100.0
+            p_ree_growth = st.slider("REE supply growth (%/yr)", 0.0, 80.0, 30.0, 1.0) / 100.0
+
+        p_sic_growth = st.slider("SiC wafer supply growth (%/yr)", 0.0, 100.0, 35.0, 1.0) / 100.0
+        run_lab = st.form_submit_button("Run parameter experiment", type="primary")
+
+    if run_lab:
+        params = {
+            "scenario": p_scenario,
+            "weeks": int(p_weeks),
+            "seed": int(p_seed),
+            "uk_market_gwh": p_uk_market,
+            "uk_demand_growth": p_uk_growth,
+            "uk_price_elasticity": p_uk_price_elasticity,
+            "uk_backlog_sensitivity": p_uk_backlog_sens,
+            "uk_availability_floor": p_uk_availability_floor,
+            "uk_oem_target_k": p_uk_oem_target,
+            "uk_oem_safety_weeks": p_uk_oem_safety,
+            "uk_vertical_integration": p_uk_vertical,
+            "harness_safety_weeks": p_harness_safety,
+            "harness_lead_time": p_harness_lead,
+            "bullwhip_factor": p_bullwhip,
+            "tier1_capacity_growth": p_tier1_growth,
+            "sic_dependency": p_sic_dependency,
+            "ree_motor_dependency": p_ree_dependency,
+            "cell_capacity_growth": p_cell_growth,
+            "measurement_lag_weeks": p_meas_lag,
+            "price_adjustment_speed": p_price_speed,
+            "price_scarcity_sensitivity": p_price_alpha,
+            "lfp_shift_speed": p_lfp_speed,
+            "capex_trigger_util": p_capex_trigger,
+            "cobalt_transport_weeks": p_cobalt_transport,
+            "graphite_transport_weeks": p_graphite_transport,
+            "ree_transport_weeks": p_ree_transport,
+            "sic_transport_weeks": p_sic_transport,
+            "cobalt_supply_vol": p_cobalt_vol,
+            "graphite_supply_vol": p_graphite_vol,
+            "ree_supply_vol": p_ree_vol,
+            "sic_supply_vol": p_sic_vol,
+            "cobalt_supply_growth": p_cobalt_growth,
+            "graphite_supply_growth": p_graphite_growth,
+            "ree_supply_growth": p_ree_growth,
+            "sic_supply_growth": p_sic_growth,
+        }
+        result = run_custom_parameter_experiment(params)
+        base = result["baseline"]
+        custom = result["custom"]
+        weeks = list(range(len(custom["week"])))
+
+        base_prod = np.array(base["oem_production_k"])
+        custom_prod = np.array(custom["oem_production_k"])
+        rel_loss = np.maximum(0.0, 1.0 - custom_prod / np.maximum(base_prod, 1e-9))
+        cum_loss = float(np.maximum(0.0, base_prod - custom_prod).sum())
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.metric("Peak loss", f"{rel_loss.max() * 100:.1f}%")
+        with k2:
+            st.metric("Mean loss", f"{rel_loss.mean() * 100:.1f}%")
+        with k3:
+            st.metric("Cumulative loss", f"{cum_loss:.0f} k veh")
+        with k4:
+            st.metric("Final backlog", f"{custom['total_backlog_k'][-1]:.0f} k veh")
+
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            fig = go.Figure()
+            line(fig, weeks, base["oem_production_k"], "Adjusted baseline", "#94a3b8", dash="dot", width=2)
+            line(fig, weeks, custom["oem_production_k"], SC_LABELS[p_scenario], SC_COLOURS[p_scenario], width=2)
+            std_layout(fig, "UK OEM Production Under Adjusted Parameters", 320)
+            st.plotly_chart(fig, width="stretch")
+        with pc2:
+            fig = go.Figure()
+            line(fig, weeks, custom["price_signal"], "Price pressure", "#f59e0b", width=2)
+            line(fig, weeks, custom["stock_harness_wk"], "Harness stock", "#06b6d4", dash="dash")
+            line(fig, weeks, custom["stock_cobalt_wk"], "Cobalt stock", "#ef4444", dash="dot")
+            std_layout(fig, "Selected SD State Variables", 320)
+            st.plotly_chart(fig, width="stretch")
+
+        st.markdown("**Adjusted parameter set**")
+        param_df = pd.DataFrame(
+            [{"parameter": k, "value": v} for k, v in params.items()]
+        )
+        st.dataframe(param_df, width="stretch", hide_index=True)
+
+        with st.expander("Source-calibration audit for this run"):
+            st.dataframe(pd.DataFrame(result["calibration"]), width="stretch", hide_index=True)
+    else:
+        st.info("Set the assumptions above, then run the experiment to compare the adjusted scenario with its adjusted baseline.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — POLICY EVALUATION
+# ═══════════════════════════════════════════════════════════════════════════════
+with T_POLICY:
+    st.subheader("UK Government Intervention Evaluation")
+    st.caption(
+        "Compares shock-only scenarios with matched intervention packages derived from "
+        "DRIVE35 and the Advanced Manufacturing Sector Plan."
+    )
+    pol_df, pol_modified = load_policy_evaluation()
+
+    if pol_df.empty:
+        st.warning("No policy evaluation file found. Run `python evaluate_policy_interventions.py` to generate it.")
+    else:
+        if pol_modified:
+            modified_text = pd.to_datetime(pol_modified, unit="s").strftime("%Y-%m-%d %H:%M")
+            st.caption(f"Loaded from `results/policy_intervention_evaluation.csv` · last updated {modified_text}")
+
+        best = pol_df.sort_values("avoided_loss_k_veh", ascending=False).iloc[0]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Best Avoided Loss", f"{best['avoided_loss_k_veh']:.0f} k veh", best["policy_package"])
+        with c2:
+            st.metric("Best Avoided Loss %", f"{best['avoided_loss_pct']:.1f}%", best["base_scenario"])
+        with c3:
+            st.metric("Peak Loss Reduction", f"{best['peak_loss_reduction_pct_pt']:.1f} pp")
+        with c4:
+            st.metric("Policy Runs", len(pol_df))
+
+        p1, p2 = st.columns([1, 1])
+        with p1:
+            scenario_filter = st.multiselect(
+                "Shock scenario",
+                options=sorted(pol_df["base_scenario"].unique()),
+                default=sorted(pol_df["base_scenario"].unique()),
+            )
+        with p2:
+            package_filter = st.multiselect(
+                "Policy package",
+                options=sorted(pol_df["policy_package"].unique()),
+                default=sorted(pol_df["policy_package"].unique()),
+            )
+
+        view = pol_df[
+            pol_df["base_scenario"].isin(scenario_filter)
+            & pol_df["policy_package"].isin(package_filter)
+        ].copy()
+
+        fig = go.Figure()
+        for pkg in sorted(view["policy_package"].unique()):
+            sub = view[view["policy_package"] == pkg]
+            fig.add_trace(go.Bar(
+                x=sub["base_scenario"],
+                y=sub["avoided_loss_k_veh"],
+                name=pkg,
+            ))
+        pol_layout = dict(PLOT_LAYOUT)
+        pol_layout.update(
+            title=dict(text="Avoided UK Vehicle Loss By Intervention", font=dict(size=12, color="#e2e8f0")),
+            height=380,
+            barmode="group",
+            xaxis=dict(tickangle=-35, gridcolor="#2e3244"),
+            yaxis=dict(title="Avoided loss (k vehicles)", gridcolor="#2e3244"),
+        )
+        fig.update_layout(**pol_layout)
+        st.plotly_chart(fig, width="stretch")
+
+        st.subheader("Policy Impact Table")
+        st.dataframe(
+            view[[
+                "base_scenario",
+                "policy_package",
+                "shock_only_cumulative_loss_k",
+                "policy_cumulative_loss_k",
+                "avoided_loss_k_veh",
+                "avoided_loss_pct",
+                "shock_only_peak_loss_pct",
+                "policy_peak_loss_pct",
+                "peak_loss_reduction_pct_pt",
+                "shock_only_max_backlog_k",
+                "policy_max_backlog_k",
+            ]],
+            width="stretch",
+            hide_index=True,
+        )
+
+        with st.expander("How the packages are represented in the model"):
+            st.markdown(
+                """
+                - **Battery Sovereignty Package:** increases UK cell scale-up, buffers, recovery, and mitigation of CATL concentration risk.
+                - **Tier-1 Resilience Package:** raises component buffers, shortens selected lead times, and improves recovery for harness, inverters, motors, packs, and UK OEM operations.
+                - **Critical Minerals Security Package:** adds strategic cobalt, graphite, REE, SiC, and lithium buffers, plus recycling/offtake-style supply boosts.
+                - **Full Industrial Strategy Package:** combines the above with a further energy/grid/skills/data overlay that increases growth, recovery, vertical integration, and shock absorption.
+                """
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — VALIDATION
+# ═══════════════════════════════════════════════════════════════════════════════
+with T_VALIDATION:
+    st.subheader("Model Validation Results")
+    checks, val_metrics, val_report, val_modified = load_validation_results()
+
+    if checks.empty and val_metrics.empty and not val_report:
+        st.warning("No validation artifacts found. Run `python validate_model.py` to generate validation outputs.")
+    else:
+        if val_modified:
+            modified_text = pd.to_datetime(val_modified, unit="s").strftime("%Y-%m-%d %H:%M")
+            st.caption(f"Loaded from `results/validation_*.csv` and `results/validation_report.md` · last updated {modified_text}")
+
+        if not checks.empty:
+            status_counts = checks["status"].value_counts().to_dict()
+            pass_n = int(status_counts.get("PASS", 0))
+            warn_n = int(status_counts.get("WARN", 0))
+            fail_n = int(status_counts.get("FAIL", 0))
+
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("PASS", pass_n)
+            with c2:
+                st.metric("WARN", warn_n)
+            with c3:
+                st.metric("FAIL", fail_n, delta_color="inverse")
+            with c4:
+                st.metric("Total Checks", len(checks))
+
+            if fail_n or warn_n:
+                st.subheader("Warnings And Failures")
+                st.dataframe(
+                    checks[checks["status"].isin(["WARN", "FAIL"])],
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.success("All validation checks passed with no warnings.")
+
+            st.subheader("Validation Checks")
+            vf1, vf2 = st.columns([1, 2])
+            with vf1:
+                status_filter = st.multiselect(
+                    "Status filter",
+                    options=sorted(checks["status"].dropna().unique()),
+                    default=sorted(checks["status"].dropna().unique()),
+                )
+            with vf2:
+                category_filter = st.multiselect(
+                    "Category filter",
+                    options=sorted(checks["category"].dropna().unique()),
+                    default=sorted(checks["category"].dropna().unique()),
+                )
+            checks_view = checks[
+                checks["status"].isin(status_filter)
+                & checks["category"].isin(category_filter)
+            ]
+            st.dataframe(checks_view, width="stretch", hide_index=True)
+
+        if not val_metrics.empty:
+            st.subheader("Scenario Validation Metrics")
+            st.dataframe(val_metrics, width="stretch", hide_index=True)
+
+            if {"scenario", "cumulative_loss_k_veh_vs_baseline", "max_total_backlog_k"}.issubset(val_metrics.columns):
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=val_metrics["scenario"],
+                    y=val_metrics["cumulative_loss_k_veh_vs_baseline"],
+                    name="Cumulative loss",
+                    marker_color="#f97316",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=val_metrics["scenario"],
+                    y=val_metrics["max_total_backlog_k"],
+                    name="Max backlog",
+                    mode="lines+markers",
+                    line=dict(color="#06b6d4", width=2),
+                    yaxis="y2",
+                ))
+                val_layout = dict(PLOT_LAYOUT)
+                val_layout.update(
+                    title=dict(text="Validation Scenario Stress Metrics", font=dict(size=12, color="#e2e8f0")),
+                    height=360,
+                    yaxis=dict(title="Cumulative loss (k vehicles)", gridcolor="#2e3244"),
+                    yaxis2=dict(title="Max backlog (k vehicles)", overlaying="y", side="right", gridcolor="#2e3244"),
+                    xaxis=dict(tickangle=-35, gridcolor="#2e3244"),
+                )
+                fig.update_layout(**val_layout)
+                st.plotly_chart(fig, width="stretch")
+
+        if val_report:
+            with st.expander("Full validation report"):
+                st.markdown(val_report)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — OEM BREAKDOWN
 # ═══════════════════════════════════════════════════════════════════════════════
 with T_OEM:
     st.markdown(
