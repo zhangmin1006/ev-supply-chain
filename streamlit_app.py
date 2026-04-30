@@ -8,14 +8,22 @@ Deploy:        Streamlit Community Cloud → https://share.streamlit.io
 
 import json
 import os
+import re
 import sys
 import copy
+from io import BytesIO
+from urllib.parse import quote
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
+from model.financial_profiles import (
+    AGENT_FINANCIAL_PEERS,
+    AGENT_PEER_TICKERS,
+    FOUR_TIER_AGENT_GROUPS,
+)
 
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
@@ -68,6 +76,7 @@ SC_DESC = {
     "china_catl_disruption":    "Major CATL plant disruption (Ningde cluster) — 37 % global cell concentration risk ★ new",
 }
 SHOCK_SCS = [s for s in SC_COLOURS if s != "baseline"]
+CHOOSE_SCENARIO = "Choose scenario"
 
 OEM_COLOURS = {
     "byd_oem":            "#ef4444",
@@ -429,7 +438,7 @@ T_OVERVIEW, T_SCENARIO, T_PARAMETERS, T_POLICY, T_VALIDATION, T_OEM, T_STOCKS, T
     "🏭 UK OEM",
     "⛏️ Supply Chain Stocks",
     "🤖 Agent Archetypes",
-    "🔗 Value Chain",
+    "Supply Chain Map",
     "📡 Live Data",
     "🇬🇧 UK Stress Focus",
 ])
@@ -469,12 +478,14 @@ with T_OVERVIEW:
 
     # Scenario selector
     selected = st.multiselect(
-        "Select scenarios to compare:",
+        "Choose scenarios to compare:",
         options=SHOCK_SCS,
-        default=SHOCK_SCS,
+        default=[],
         format_func=lambda s: SC_LABELS[s],
         key="ov_select",
     )
+    if not selected:
+        st.info("Choose one or more scenarios to compare with the baseline.")
 
     # Production chart
     fig_ov = go.Figure()
@@ -502,11 +513,15 @@ with T_OVERVIEW:
 # ═══════════════════════════════════════════════════════════════════════════════
 with T_SCENARIO:
     sc_sel = st.selectbox(
-        "Select scenario for deep-dive analysis:",
-        options=SHOCK_SCS,
-        format_func=lambda s: f"{SC_LABELS[s]} — {SC_DESC[s]}",
+        "Choose scenario for deep-dive analysis:",
+        options=[CHOOSE_SCENARIO] + SHOCK_SCS,
+        index=0,
+        format_func=lambda s: s if s == CHOOSE_SCENARIO else f"{SC_LABELS[s]} - {SC_DESC[s]}",
         key="sc_sel",
     )
+    if sc_sel == CHOOSE_SCENARIO:
+        st.info("Choose a scenario to show the deep-dive charts.")
+        sc_sel = SHOCK_SCS[0]
     col = SC_COLOURS[sc_sel]
     d = DATA[sc_sel]
     bl_prod = np.array(BL["oem_production_k"])
@@ -595,9 +610,9 @@ with T_PARAMETERS:
         with c_top1:
             p_scenario = st.selectbox(
                 "Scenario",
-                options=SHOCK_SCS,
-                index=SHOCK_SCS.index("uk_supply_chain_friction") if "uk_supply_chain_friction" in SHOCK_SCS else 0,
-                format_func=lambda s: SC_LABELS[s],
+                options=[CHOOSE_SCENARIO] + SHOCK_SCS,
+                index=0,
+                format_func=lambda s: s if s == CHOOSE_SCENARIO else SC_LABELS[s],
             )
         with c_top2:
             p_weeks = st.slider("Horizon (weeks)", 52, 260, 156, 26)
@@ -665,7 +680,9 @@ with T_PARAMETERS:
         p_sic_growth = st.slider("SiC wafer supply growth (%/yr)", 0.0, 100.0, 35.0, 1.0) / 100.0
         run_lab = st.form_submit_button("Run parameter experiment", type="primary")
 
-    if run_lab:
+    if run_lab and p_scenario == CHOOSE_SCENARIO:
+        st.warning("Choose a scenario before running the parameter experiment.")
+    elif run_lab:
         params = {
             "scenario": p_scenario,
             "weeks": int(p_weeks),
@@ -1534,12 +1551,203 @@ def fetch_world_bank_data():
     return {"countries": countries_list, "data": country_data}
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_critical_mineral_prices():
+    """Fetch EV-relevant commodity price benchmarks from open public sources."""
+    te_specs = [
+        {
+            "slug": "lithium",
+            "mineral": "Lithium carbonate",
+            "ev_use": "Battery cathode precursor",
+            "benchmark": "China battery-grade lithium carbonate CFD",
+        },
+        {
+            "slug": "cobalt",
+            "mineral": "Cobalt",
+            "ev_use": "NMC/NCA cathodes",
+            "benchmark": "Cobalt OTC/CFD benchmark",
+        },
+        {
+            "slug": "neodymium",
+            "mineral": "Neodymium rare earth",
+            "ev_use": "NdFeB traction motor magnets",
+            "benchmark": "Neodymium rare earth CFD",
+        },
+    ]
+    wb_specs = [
+        ("Nickel", "NMC cathodes, stainless battery systems", "World Bank Pink Sheet monthly"),
+        ("Copper", "Motors, wiring harnesses, busbars", "World Bank Pink Sheet monthly"),
+        ("Aluminum", "Vehicle lightweighting, pack casings", "World Bank Pink Sheet monthly"),
+    ]
+    rows = []
+    errors = []
+    headers = {"User-Agent": "Mozilla/5.0 (EV supply-chain dashboard)"}
+
+    def _num(txt):
+        try:
+            return float(str(txt).replace(",", "").strip())
+        except Exception:
+            return np.nan
+
+    for spec in te_specs:
+        url = f"https://tradingeconomics.com/commodity/{spec['slug']}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=12)
+            resp.raise_for_status()
+            text = resp.text.replace("\r", " ").replace("\n", " ")
+            meta = re.search(r'<meta[^>]+name="description"[^>]+content="([^"]+)"', text)
+            hay = meta.group(1) if meta else re.sub(r"<[^>]+>", " ", text[:12000])
+            price_match = re.search(
+                r"(?:traded|fell|rose|increased|decreased|held|was|were)[^.]{0,120}?"
+                r"(?:to|at)\s+([0-9][0-9,]*(?:\.[0-9]+)?)\s*([A-Z]{3}\s*/?\s*T|CNY/T|USD/T|RMB/T)",
+                hay,
+                flags=re.IGNORECASE,
+            )
+            date_match = re.search(r"on ([A-Z][a-z]+ \d{1,2}, \d{4})", hay)
+            month_match = re.search(
+                r"past month[^.]{0,80}?([0-9]+(?:\.[0-9]+)?)%",
+                hay,
+                flags=re.IGNORECASE,
+            )
+            if not price_match:
+                raise ValueError("price text not found")
+            price = _num(price_match.group(1))
+            unit = price_match.group(2).replace(" ", "").replace("RMB", "CNY")
+            rows.append({
+                "Mineral": spec["mineral"],
+                "Price": price,
+                "Unit": unit,
+                "Latest_date": date_match.group(1) if date_match else "latest page value",
+                "Change": f"{month_match.group(1)}% over past month" if month_match else "",
+                "Benchmark": spec["benchmark"],
+                "EV_use": spec["ev_use"],
+                "Source": "Trading Economics",
+                "URL": url,
+            })
+        except Exception as exc:
+            errors.append(f"{spec['mineral']}: {exc}")
+
+    wb_url = (
+        "https://thedocs.worldbank.org/en/doc/"
+        "74e8be41ceb20fa0da750cda2f6b9e4e-0050012026/related/"
+        "CMO-Historical-Data-Monthly.xlsx"
+    )
+    try:
+        resp = requests.get(wb_url, headers=headers, timeout=20)
+        resp.raise_for_status()
+        wb = pd.read_excel(BytesIO(resp.content), sheet_name="Monthly Prices", header=4)
+        date_col = wb.columns[0]
+        wb = wb[wb[date_col].astype(str).str.match(r"^\d{4}M\d{2}$", na=False)]
+        wb = wb.replace("...", np.nan).replace("…", np.nan)
+        for mineral, ev_use, benchmark in wb_specs:
+            if mineral not in wb.columns:
+                continue
+            series = pd.to_numeric(wb[mineral], errors="coerce")
+            valid = series.dropna()
+            if valid.empty:
+                continue
+            idx = valid.index[-1]
+            prev = valid.iloc[-2] if len(valid) > 1 else np.nan
+            latest = valid.iloc[-1]
+            change = ""
+            if pd.notna(prev) and prev:
+                change = f"{((latest / prev) - 1) * 100:+.1f}% vs prior month"
+            rows.append({
+                "Mineral": mineral,
+                "Price": float(latest),
+                "Unit": "USD/mt",
+                "Latest_date": str(wb.loc[idx, date_col]),
+                "Change": change,
+                "Benchmark": benchmark,
+                "EV_use": ev_use,
+                "Source": "World Bank Pink Sheet",
+                "URL": wb_url,
+            })
+    except Exception as exc:
+        errors.append(f"World Bank Pink Sheet: {exc}")
+
+    rows.append({
+        "Mineral": "Graphite flake / anode material",
+        "Price": np.nan,
+        "Unit": "USD/tonne",
+        "Latest_date": "public benchmark range",
+        "Change": "",
+        "Benchmark": "$540-860/t flake; $8,000-12,000/t synthetic graphite",
+        "EV_use": "Battery anodes",
+        "Source": "Public market range; live benchmarks are mostly paywalled",
+        "URL": "https://criticalstrategicmetals.com/minerals/graphite/price/",
+    })
+
+    return pd.DataFrame(rows), errors
+
+
+@st.cache_data(show_spinner=False)
+def listed_company_universe():
+    """Return listed financial peers used by the model, grouped by model tier."""
+    rows = []
+    seen = set()
+    for tier, agents in FOUR_TIER_AGENT_GROUPS.items():
+        for agent_id in agents:
+            for company in AGENT_FINANCIAL_PEERS.get(agent_id, ()):
+                ticker = AGENT_PEER_TICKERS.get(company, "")
+                if not ticker:
+                    continue
+                key = (tier, agent_id, company, ticker)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({
+                    "Tier": tier,
+                    "Model agent": agent_id,
+                    "Company": company,
+                    "Ticker": ticker,
+                })
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_live_stock_prices(symbols):
+    """Fetch delayed quote data from Yahoo Finance chart endpoints."""
+    rows = []
+    errors = []
+    headers = {"User-Agent": "Mozilla/5.0 (EV supply-chain dashboard)"}
+    for symbol in tuple(symbols):
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol)}?range=5d&interval=1d"
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            result = (resp.json().get("chart", {}).get("result") or [None])[0]
+            if not result:
+                raise ValueError("empty quote response")
+            meta = result.get("meta", {})
+            price = meta.get("regularMarketPrice")
+            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+            currency = meta.get("currency", "")
+            change = np.nan
+            change_pct = np.nan
+            if price is not None and prev:
+                change = float(price) - float(prev)
+                change_pct = (float(price) / float(prev) - 1.0) * 100.0
+            rows.append({
+                "Ticker": symbol,
+                "Price": float(price) if price is not None else np.nan,
+                "Currency": currency,
+                "Change": change,
+                "Change_pct": change_pct,
+                "Exchange": meta.get("fullExchangeName") or meta.get("exchangeName") or meta.get("exchange", ""),
+                "Market_state": meta.get("marketState", ""),
+            })
+        except Exception as exc:
+            errors.append(f"{symbol}: {exc}")
+    return pd.DataFrame(rows), errors
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPER — 4-tier ABM map HTML component
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _make_sc_map_html() -> str:
-    """Return a self-contained dark-theme HTML showing every ABM agent by tier and archetype."""
+    """Return a self-contained light-theme HTML showing every ABM agent by tier and archetype."""
     return """<!DOCTYPE html>
 <html>
 <head>
@@ -1547,7 +1755,7 @@ def _make_sc_map_html() -> str:
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #0f1117; color: #e2e8f0;
+    background: #f8fafc; color: #0f172a;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 12px; padding: 14px;
   }
@@ -1568,38 +1776,29 @@ def _make_sc_map_html() -> str:
     padding: 5px 4px; border-radius: 6px; letter-spacing: 0.3px; margin-bottom: 3px;
   }
   .agent {
-    background: #20232f; border: 1px solid #2e3244; border-radius: 6px;
-    padding: 6px 8px;
+    background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px;
+    padding: 7px 8px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   }
-  .ag-name { font-weight: 600; color: #e2e8f0; font-size: 11px; margin-bottom: 2px; }
+  .ag-name { font-weight: 700; color: #0f172a; font-size: 11px; margin-bottom: 3px; line-height: 1.25; }
   .ag-badge {
     display: inline-block; font-size: 8.5px; font-weight: 700;
     padding: 1px 5px; border-radius: 3px; color: #fff; margin-bottom: 2px;
   }
-  .ag-detail { color: #64748b; font-size: 9.5px; }
-  .mkt-label { color: #64748b; font-size: 9.5px; font-weight: 700;
+  .ag-detail { color: #475569; font-size: 9.5px; line-height: 1.25; }
+  .mkt-label { color: #334155; font-size: 9.5px; font-weight: 700;
     letter-spacing: 0.3px; margin-top: 8px; margin-bottom: 3px; }
   .mkt-item {
-    background: #1a1d27; border: 1px solid #2e3244; border-radius: 5px;
-    padding: 5px 8px; color: #94a3b8; font-size: 10px; margin-bottom: 3px;
+    background: #ffffff; border: 1px solid #cbd5e1; border-radius: 5px;
+    padding: 5px 8px; color: #475569; font-size: 10px; margin-bottom: 3px;
   }
-  .mkt-item span { color: #e2e8f0; font-weight: 600; }
+  .mkt-item span { color: #0f172a; font-weight: 700; }
   .arrow-col {
     display: flex; align-items: flex-start; justify-content: center;
-    padding-top: 40px; font-size: 20px; color: #2e3244;
+    padding-top: 40px; font-size: 20px; color: #64748b;
   }
 </style>
 </head>
 <body>
-<div class='callout'>
-  <strong>ABM Model — 4-Tier Agent Architecture</strong> &mdash;
-  Every agent in the simulation is shown below with its archetype badge and real-world anchor.
-  The model abstracts the full industry value chain into 4 tiers linked by Leontief
-  input-output constraints. For the complete 6-tier industry value chain (raw mining &rarr;
-  chemicals &rarr; cells &rarr; sub-systems &rarr; OEMs &rarr; markets), open
-  <strong>index.html &rsaquo; Value Chain tab</strong> in the repository root.
-</div>
-
 <div class='sc-grid'>
 
 <!-- ── TIER 0 ── -->
@@ -1608,62 +1807,62 @@ def _make_sc_map_html() -> str:
     ⛏️ Tier 0 &mdash; Mineral Suppliers
   </div>
   <div class='agent'>
-    <div class='ag-name'>graphite_chn</div>
+    <div class='ag-name'>Syrah Resources / Ganfeng Lithium</div>
     <span class='ag-badge' style='background:#ef4444'>StateBacked</span>
     <div class='ag-detail'>China &middot; 79% battery graphite</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>ree_chn</div>
+    <div class='ag-name'>China Northern Rare Earth</div>
     <span class='ag-badge' style='background:#ef4444'>StateBacked</span>
     <div class='ag-detail'>China &middot; 85% NdPr processing</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>cobalt_other</div>
+    <div class='ag-name'>Glencore</div>
     <span class='ag-badge' style='background:#ef4444'>StateBacked</span>
     <div class='ag-detail'>State-aligned cobalt flows</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>sic_china</div>
+    <div class='ag-name'>STMicroelectronics / Infineon</div>
     <span class='ag-badge' style='background:#ef4444'>StateBacked</span>
     <div class='ag-detail'>China SiC wafer capacity</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>lithium_aus</div>
+    <div class='ag-name'>Pilbara Minerals / Mineral Resources / Albemarle</div>
     <span class='ag-badge' style='background:#f59e0b'>WesternMiner</span>
     <div class='ag-detail'>Pilbara spodumene &middot; 46%</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>lithium_chl</div>
+    <div class='ag-name'>SQM / Albemarle</div>
     <span class='ag-badge' style='background:#f59e0b'>WesternMiner</span>
     <div class='ag-detail'>Atacama brine &middot; 30%</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>cobalt_drc</div>
+    <div class='ag-name'>Glencore / CMOC Group</div>
     <span class='ag-badge' style='background:#f59e0b'>WesternMiner</span>
     <div class='ag-detail'>DRC &middot; 70% global share</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>sic_coherent</div>
+    <div class='ag-name'>Coherent</div>
     <span class='ag-badge' style='background:#f59e0b'>WesternMiner</span>
     <div class='ag-detail'>Coherent Corp SiC boules</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>sic_other</div>
+    <div class='ag-name'>STMicroelectronics / Rohm / Infineon</div>
     <span class='ag-badge' style='background:#f59e0b'>WesternMiner</span>
     <div class='ag-detail'>STMicro / Infineon SiC</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>lithium_other</div>
+    <div class='ag-name'>Albemarle / SQM</div>
     <span class='ag-badge' style='background:#f97316'>GreenfieldBuilder</span>
     <div class='ag-detail'>New entrant capacity</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>ree_other</div>
+    <div class='ag-name'>MP Materials / Lynas Rare Earths</div>
     <span class='ag-badge' style='background:#f97316'>GreenfieldBuilder</span>
     <div class='ag-detail'>Ex-China REE projects</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>sic_wolfspeed</div>
+    <div class='ag-name'>Wolfspeed / Coherent</div>
     <span class='ag-badge' style='background:#f97316'>GreenfieldBuilder</span>
     <div class='ag-detail'>Wolfspeed &middot; debt-financed</div>
   </div>
@@ -1678,47 +1877,47 @@ def _make_sc_map_html() -> str:
     🔋 Tier 1 &mdash; Cell Manufacturers
   </div>
   <div class='agent'>
-    <div class='ag-name'>catl</div>
+    <div class='ag-name'>CATL</div>
     <span class='ag-badge' style='background:#3b82f6'>PlatformLeader</span>
     <div class='ag-detail'>37% global &middot; Ningde &middot; LFP+NMC</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>byd_cells</div>
+    <div class='ag-name'>BYD</div>
     <span class='ag-badge' style='background:#3b82f6'>PlatformLeader</span>
     <div class='ag-detail'>14% global &middot; 90% LFP</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>calb &#9733;</div>
+    <div class='ag-name'>CALB &#9733;</div>
     <span class='ag-badge' style='background:#06b6d4'>HyperScaleChallenger</span>
     <div class='ag-detail'>5% &middot; full-capacity push</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>others_cells</div>
+    <div class='ag-name'>EVE Energy / Gotion / Farasis / Sunwoda</div>
     <span class='ag-badge' style='background:#06b6d4'>HyperScaleChallenger</span>
     <div class='ag-detail'>12.8% &middot; SVOLT, REPT…</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>lg_es</div>
+    <div class='ag-name'>LG Energy Solution</div>
     <span class='ag-badge' style='background:#a855f7'>IncumbentUnderPressure</span>
     <div class='ag-detail'>13% &middot; NMC &middot; share eroding</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>panasonic</div>
+    <div class='ag-name'>Panasonic</div>
     <span class='ag-badge' style='background:#a855f7'>IncumbentUnderPressure</span>
     <div class='ag-detail'>7% &middot; NCA &middot; Tesla partner</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>samsung_sdi</div>
+    <div class='ag-name'>Samsung SDI</div>
     <span class='ag-badge' style='background:#a855f7'>IncumbentUnderPressure</span>
     <div class='ag-detail'>6% &middot; NMC 811</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>sk_on</div>
+    <div class='ag-name'>SK On</div>
     <span class='ag-badge' style='background:#a855f7'>IncumbentUnderPressure</span>
     <div class='ag-detail'>5% &middot; NMC &middot; Ford/VW supply</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>aesc_uk &#9733;</div>
+    <div class='ag-name'>AESC UK / Envision AESC &#9733;</div>
     <span class='ag-badge' style='background:#a855f7'>IncumbentUnderPressure</span>
     <div class='ag-detail'>0.2% &middot; Sunderland, UK only</div>
   </div>
@@ -1733,22 +1932,22 @@ def _make_sc_map_html() -> str:
     ⚙️ Tier 2 &mdash; Sub-system Suppliers
   </div>
   <div class='agent'>
-    <div class='ag-name'>battery_pack</div>
+    <div class='ag-name'>CATL / BYD / LG Energy Solution / Panasonic / Samsung SDI</div>
     <span class='ag-badge' style='background:#10b981'>BatteryPackIntegrator</span>
     <div class='ag-detail'>JIT &middot; order = demand exactly</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>inverter</div>
+    <div class='ag-name'>BorgWarner / Infineon / ONsemi / STMicroelectronics</div>
     <span class='ag-badge' style='background:#6366f1'>PremiumPowerElectronics</span>
     <div class='ag-detail'>16-wk lead &middot; SiC-dependent</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>motor</div>
+    <div class='ag-name'>Nidec / BorgWarner / Denso / Magna</div>
     <span class='ag-badge' style='background:#14b8a6'>EstablishedVolumeSupplier</span>
     <div class='ag-detail'>12-wk lead &middot; REE NdFeB</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>harness</div>
+    <div class='ag-name'>Aptiv / Sumitomo Electric / TE Connectivity</div>
     <span class='ag-badge' style='background:#14b8a6'>EstablishedVolumeSupplier</span>
     <div class='ag-detail'>6-wk lead &middot; Ukraine exposure</div>
   </div>
@@ -1763,37 +1962,37 @@ def _make_sc_map_html() -> str:
     🏭 Tier 3 &mdash; OEMs &amp; Markets
   </div>
   <div class='agent'>
-    <div class='ag-name'>other_chinese_oem</div>
+    <div class='ag-name'>SAIC / Geely / NIO / Li Auto / XPeng / Leapmotor</div>
     <span class='ag-badge' style='background:#d97706'>EVNativeScaleAspirant</span>
     <div class='ag-detail'>6,825 k/yr &middot; NIO/Li Auto/Xpeng</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>byd_oem</div>
+    <div class='ag-name'>BYD</div>
     <span class='ag-badge' style='background:#64748b'>base OEMAgent</span>
     <div class='ag-detail'>1,575 k/yr &middot; vertically int.</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>us_oem</div>
+    <div class='ag-name'>Tesla / General Motors / Ford / Rivian / Lucid</div>
     <span class='ag-badge' style='background:#f43f5e'>TransitioningLegacyOEM</span>
     <div class='ag-detail'>1,820 k/yr &middot; Tesla/GM/Ford</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>german_oem</div>
+    <div class='ag-name'>Volkswagen / BMW / Mercedes-Benz / Stellantis</div>
     <span class='ag-badge' style='background:#f43f5e'>TransitioningLegacyOEM</span>
     <div class='ag-detail'>1,505 k/yr &middot; VW/BMW/Mercedes</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>uk_oem &#9733;</div>
+    <div class='ag-name'>BMW MINI / Stellantis Vauxhall / Nissan Sunderland &#9733;</div>
     <span class='ag-badge' style='background:#f43f5e'>TransitioningLegacyOEM</span>
     <div class='ag-detail'>175 k/yr &middot; JLR/MINI/Vauxhall</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>korean_oem</div>
+    <div class='ag-name'>Hyundai Motor / Kia</div>
     <span class='ag-badge' style='background:#059669'>ProfitableEstablishedOEM</span>
     <div class='ag-detail'>1,120 k/yr &middot; Hyundai/Kia</div>
   </div>
   <div class='agent'>
-    <div class='ag-name'>japanese_oem</div>
+    <div class='ag-name'>Toyota / Honda / Nissan</div>
     <span class='ag-badge' style='background:#059669'>ProfitableEstablishedOEM</span>
     <div class='ag-detail'>980 k/yr &middot; Toyota/Honda</div>
   </div>
@@ -1822,14 +2021,6 @@ with T_MAP:
         "bottleneck input allows. The Sankey below shows annual production volumes "
         "from cell archetype groups through to end markets."
     )
-    st.info(
-        "**Full 6-tier Industry Value Chain:** For refined chemicals, cell components "
-        "(anode / cathode / electrolyte), power electronics sub-tiers, and all "
-        "component HS codes and standards, open **index.html** in the repository root "
-        "and navigate to the **Value Chain** tab.",
-        icon="🔗",
-    )
-
     import streamlit.components.v1 as _components
     _components.html(_make_sc_map_html(), height=870, scrolling=True)
 
@@ -1901,71 +2092,150 @@ with T_MAP:
 # TAB 7 — LIVE MARKET DATA
 # ═══════════════════════════════════════════════════════════════════════════════
 with T_MARKET:
-    st.subheader("Live Manufacturing & Economic Indicators")
+    st.subheader("Critical EV Mineral Prices")
     st.caption(
-        "Fetched live from the World Bank Open Data API (cached 1 hour). "
-        "Most-recent value within the last 3 reported years shown."
+        "Fetched from open commodity price sources and cached for 1 hour. "
+        "Trading Economics values are delayed page benchmarks; World Bank Pink Sheet values are monthly nominal USD prices."
     )
 
-    if st.button("Refresh live data", key="wb_refresh"):
-        fetch_world_bank_data.clear()
+    if st.button("Refresh mineral prices", key="mineral_price_refresh"):
+        fetch_critical_mineral_prices.clear()
         st.rerun()
 
     try:
-        _wb    = fetch_world_bank_data()
-        _wb_ok = True
+        _price_df, _price_errors = fetch_critical_mineral_prices()
     except Exception as _exc:
-        _wb_ok     = False
-        _wb_errmsg = str(_exc)
+        _price_df = pd.DataFrame()
+        _price_errors = [str(_exc)]
 
-    if _wb_ok:
-        _countries = _wb["countries"]
-        _wb_data   = _wb["data"]
-        _MFG  = "NV.IND.MANF.ZS"
-        _TECH = "TX.VAL.TECH.MF.ZS"
-        _GDP  = "NY.GDP.MKTP.CD"
+    if not _price_df.empty:
+        _view = _price_df.copy()
+        _view["Price_display"] = _view.apply(
+            lambda r: (
+                f"{r['Price']:,.0f} {r['Unit']}"
+                if pd.notna(r["Price"])
+                else r["Benchmark"]
+            ),
+            axis=1,
+        )
+        _cols = st.columns(4)
+        for _ci, (_, _row) in enumerate(_view.head(4).iterrows()):
+            with _cols[_ci]:
+                st.metric(
+                    _row["Mineral"],
+                    _row["Price_display"],
+                    _row["Change"] if _row["Change"] else None,
+                )
 
-        def _wbfmt(rec, ind, suffix="", scale=1.0, dec=1):
-            entry = rec.get(ind)
-            if not entry or entry.get("value") is None:
-                return "—", ""
-            return f"{entry['value'] * scale:,.{dec}f}{suffix}", entry.get("year", "")
+        st.dataframe(
+            _view[["Mineral", "Price_display", "Latest_date", "Benchmark", "EV_use", "Source", "URL"]]
+            .rename(columns={
+                "Price_display": "Price",
+                "Latest_date": "Latest date",
+                "EV_use": "EV use",
+            }),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "URL": st.column_config.LinkColumn("URL", display_text="source"),
+            },
+        )
 
-        for _row_slice in (_countries[:5], _countries[5:]):
-            _cols = st.columns(5)
-            for _ci, _c in enumerate(_row_slice):
-                _iso  = _c["iso"]
-                _cr   = _wb_data.get(_iso, {})
-                _mfg, _mfg_yr   = _wbfmt(_cr, _MFG,  suffix="%")
-                _tech, _tech_yr = _wbfmt(_cr, _TECH, suffix="%")
-                _gdp, _gdp_yr   = _wbfmt(_cr, _GDP,  suffix=" T", scale=1e-12, dec=2)
-                with _cols[_ci]:
-                    st.markdown(
-                        f"<div style='background:#20232f;border:1px solid #2e3244;"
-                        f"border-radius:10px;padding:12px 14px;margin-bottom:6px'>"
-                        f"<div style='font-size:1.4rem'>{_c['flag']}</div>"
-                        f"<div style='color:#e2e8f0;font-weight:700;font-size:.9rem'>{_c['name']}</div>"
-                        f"<div style='color:#64748b;font-size:.72rem;margin-bottom:8px'>{_c['role']}</div>"
-                        f"<div style='color:#94a3b8;font-size:.78rem'>Mfg % GDP</div>"
-                        f"<div style='color:#3b82f6;font-weight:700;font-size:1rem'>{_mfg}"
-                        f"<span style='color:#64748b;font-size:.68rem'> {_mfg_yr}</span></div>"
-                        f"<div style='color:#94a3b8;font-size:.78rem;margin-top:4px'>Hi-tech exports</div>"
-                        f"<div style='color:#10b981;font-weight:700;font-size:1rem'>{_tech}"
-                        f"<span style='color:#64748b;font-size:.68rem'> {_tech_yr}</span></div>"
-                        f"<div style='color:#94a3b8;font-size:.78rem;margin-top:4px'>GDP</div>"
-                        f"<div style='color:#f59e0b;font-weight:700;font-size:1rem'>${_gdp}"
-                        f"<span style='color:#64748b;font-size:.68rem'> {_gdp_yr}</span></div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+        _chart_df = _view[pd.notna(_view["Price"])].copy()
+        if not _chart_df.empty:
+            _chart_df["Label"] = _chart_df["Mineral"] + " (" + _chart_df["Unit"] + ")"
+            _fig = go.Figure()
+            _fig.add_trace(go.Bar(
+                x=_chart_df["Label"],
+                y=_chart_df["Price"],
+                marker_color=["#3b82f6", "#f59e0b", "#10b981", "#a855f7", "#06b6d4", "#ef4444"][:len(_chart_df)],
+                hovertemplate="%{x}<br>%{y:,.0f}<extra></extra>",
+            ))
+            _layout = dict(PLOT_LAYOUT)
+            _layout.update(
+                title=dict(text="Latest Public Benchmark Prices", font=dict(size=12, color="#e2e8f0")),
+                xaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9)),
+                yaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9), title="Nominal price in source unit"),
+                height=320,
+            )
+            _fig.update_layout(**_layout)
+            st.plotly_chart(_fig, width="stretch")
     else:
-        st.warning(f"Could not fetch World Bank data ({_wb_errmsg}). "
-                   "Check network access or click Refresh.", icon="⚠️")
+        st.warning("Could not fetch mineral price data. Check network access or click Refresh.", icon="⚠️")
+
+    if _price_errors:
+        with st.expander("Unavailable price feeds"):
+            st.write("\n".join(f"- {err}" for err in _price_errors))
 
     st.caption(
-        "Source: World Bank Open Data API · NV.IND.MANF.ZS · TX.VAL.TECH.MF.ZS · "
-        "NY.GDP.MKTP.CD · License: CC BY 4.0"
+        "Sources: Trading Economics commodity pages; World Bank Commodity Price Data (Pink Sheet). "
+        "Graphite spot benchmarks are included as an indicative public range because most live graphite feeds are paywalled."
     )
+    st.divider()
+
+    st.subheader("Live Stock Prices — Listed EV Supply-Chain Companies")
+    st.caption(
+        "Uses the same listed-company peer set as the model's financial calibration. "
+        "Choose tiers first, then optionally narrow the company list."
+    )
+    _universe = listed_company_universe()
+    if _universe.empty:
+        st.warning("No listed-company peer mapping is available.")
+    else:
+        _tier_options = list(_universe["Tier"].drop_duplicates())
+        _selected_tiers = st.multiselect(
+            "Choose tiers",
+            options=_tier_options,
+            default=[],
+            key="stock_price_tiers",
+        )
+        if not _selected_tiers:
+            st.info("Choose one or more tiers to fetch live stock prices.")
+        else:
+            _tier_universe = _universe[_universe["Tier"].isin(_selected_tiers)].copy()
+            _company_options = list(_tier_universe["Company"].drop_duplicates())
+            _selected_companies = st.multiselect(
+                "Choose listed companies",
+                options=_company_options,
+                default=[],
+                key="stock_price_companies",
+            )
+            if not _selected_companies:
+                st.info("Choose at least one listed company.")
+            else:
+                _stock_meta = (
+                    _tier_universe[_tier_universe["Company"].isin(_selected_companies)]
+                    .drop_duplicates(subset=["Company", "Ticker"])
+                    .copy()
+                )
+                _quotes, _quote_errors = fetch_live_stock_prices(tuple(_stock_meta["Ticker"]))
+                if not _quotes.empty:
+                    _stock_view = _stock_meta.merge(_quotes, on="Ticker", how="left")
+                    _stock_view["Price"] = _stock_view.apply(
+                        lambda r: f"{r['Price']:,.2f} {r['Currency']}" if pd.notna(r["Price"]) else "n/a",
+                        axis=1,
+                    )
+                    _stock_view["Daily change"] = _stock_view.apply(
+                        lambda r: (
+                            f"{r['Change']:+.2f} ({r['Change_pct']:+.1f}%)"
+                            if pd.notna(r["Change"]) and pd.notna(r["Change_pct"])
+                            else ""
+                        ),
+                        axis=1,
+                    )
+                    st.dataframe(
+                        _stock_view[[
+                            "Tier", "Model agent", "Company", "Ticker", "Price",
+                            "Daily change", "Exchange", "Market_state",
+                        ]].rename(columns={"Market_state": "Market state"}),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                else:
+                    st.warning("Could not fetch live stock prices for the selected companies.")
+                if _quote_errors:
+                    with st.expander("Unavailable stock quotes"):
+                        st.write("\n".join(f"- {err}" for err in _quote_errors))
     st.divider()
 
     # ── Critical Mineral Supply ───────────────────────────────────────────────
