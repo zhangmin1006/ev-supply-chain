@@ -82,23 +82,26 @@ def build_summary(results: dict[str, pd.DataFrame],
     Compare each shock scenario against baseline.
     Returns a DataFrame with one row per scenario.
     """
-    baseline_mean = baseline_df["oem_production_k"].mean()
+    baseline_prod = baseline_df["oem_production_k"].to_numpy()
 
     rows = []
     for name, df in results.items():
         if name == "baseline":
             continue
-        mean_prod   = df["oem_production_k"].mean()
-        min_prod    = df["oem_production_k"].min()
-        loss_frac   = max(0.0, (baseline_mean - mean_prod) / baseline_mean)
-        peak_loss   = max(0.0, (baseline_mean - min_prod)  / baseline_mean)
+        prod = df["oem_production_k"].to_numpy()
+        base = baseline_prod[:len(prod)]
+        rel = prod / np.maximum(base, 1e-9)
+        losses = np.maximum(0.0, 1.0 - rel)
+        mean_prod = df["oem_production_k"].mean()
+        loss_frac = losses.mean()
+        peak_loss = losses.max()
 
         # Weeks below 90% of baseline
-        below_90 = (df["oem_production_k"] < baseline_mean * 0.90).sum()
+        below_90 = int((rel < 0.90).sum())
 
         # Weeks until full recovery (last week below 90%)
-        sub = df[df["oem_production_k"] < baseline_mean * 0.90]
-        recovery_week = int(sub["week"].max()) + 1 if not sub.empty else 0
+        sub = np.where(rel < 0.90)[0]
+        recovery_week = int(df["week"].iloc[sub[-1]]) + 1 if len(sub) else 0
 
         cum_loss = (
             (baseline_df["oem_production_k"] - df["oem_production_k"])

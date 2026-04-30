@@ -88,6 +88,18 @@ OEM_LABELS = {
 
 WEEKS = list(range(260))
 YEAR_TICKS = {0: "Yr 1", 52: "Yr 2", 104: "Yr 3", 156: "Yr 4", 208: "Yr 5"}
+DATA_SCHEMA_VERSION = "uk-focus-v3"
+REQUIRED_DATA_KEYS = {
+    "focus_region",
+    "oem_production_k",
+    "oem_uk_oem_k",
+    "t1_battery_pack_k",
+    "t1_harness_k",
+    "t1_inverter_k",
+    "t1_motor_k",
+    "market_demand_gwh",
+    "cell_production_gwh",
+}
 
 PLOT_LAYOUT = dict(
     template="plotly_dark",
@@ -113,7 +125,13 @@ def load_or_run():
     if os.path.exists(json_path):
         with open(json_path) as f:
             cached = json.load(f)
-        if cached.get("baseline", {}).get("focus_region", [""])[0] == "uk":
+        baseline = cached.get("baseline", {})
+        has_required_schema = (
+            baseline.get("app_data_schema", [""])[0] == DATA_SCHEMA_VERSION
+            and baseline.get("focus_region", [""])[0] == "uk"
+            and REQUIRED_DATA_KEYS.issubset(baseline.keys())
+        )
+        if has_required_schema:
             return cached
 
     # Fallback: run simulation
@@ -135,7 +153,9 @@ def load_or_run():
         bar.progress((i + 1) / len(SCENARIOS), text=f"Scenario: {name}")
         m = EVSupplyChainModel(scenario=sc, seed=42, n_weeks=260)
         m.run()
-        results[name] = m.get_results().to_dict(orient="list")
+        scenario_data = m.get_results().to_dict(orient="list")
+        scenario_data["app_data_schema"] = [DATA_SCHEMA_VERSION] * len(scenario_data["week"])
+        results[name] = scenario_data
     bar.empty()
 
     os.makedirs(os.path.join(os.path.dirname(__file__), "results"), exist_ok=True)
@@ -147,19 +167,21 @@ def load_or_run():
 @st.cache_data
 def compute_summary(data):
     bl = np.array(data["baseline"]["oem_production_k"])
-    bl_mean = bl.mean()
     rows = []
     for name in SHOCK_SCS:
         d = data.get(name)
         if not d:
             continue
         prod = np.array(d["oem_production_k"])
-        peak_loss  = max(0.0, (1 - prod.min() / bl_mean) * 100)
-        mean_loss  = max(0.0, (bl_mean - prod.mean()) / bl_mean * 100)
-        below_90   = int((prod < bl_mean * 0.9).sum())
-        sub = np.where(prod < bl_mean * 0.9)[0]
+        base = bl[:len(prod)]
+        rel = prod / np.maximum(base, 1e-9)
+        losses = np.maximum(0.0, 1.0 - rel)
+        peak_loss  = float(losses.max() * 100)
+        mean_loss  = float(losses.mean() * 100)
+        below_90   = int((rel < 0.9).sum())
+        sub = np.where(rel < 0.9)[0]
         rec_week   = int(sub[-1]) + 1 if len(sub) else 0
-        cum_loss   = float(np.maximum(0, bl[:len(prod)] - prod).sum())
+        cum_loss   = float(np.maximum(0, base - prod).sum())
         rows.append(dict(
             Scenario=SC_LABELS[name],
             Avg_prod=round(float(prod.mean()), 1),
@@ -231,13 +253,13 @@ SUMMARY = compute_summary(DATA)
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown(
     "<h1 style='color:#e2e8f0;font-size:1.5rem;margin-bottom:2px'>"
-    "⚡ EV Supply Chain <span style='color:#3b82f6'>Intelligence Dashboard</span></h1>",
+    "⚡ UK EV Supply Chain <span style='color:#3b82f6'>Intelligence Dashboard</span></h1>",
     unsafe_allow_html=True,
 )
 st.markdown(
     "<p style='color:#94a3b8;font-size:0.82rem;margin-bottom:16px'>"
-    "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; 7 OEM groups &nbsp;·&nbsp; "
-    "9 cell makers &nbsp;·&nbsp; 5 critical minerals &nbsp;·&nbsp; 10 shock scenarios &nbsp;·&nbsp; "
+    "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; UK OEM focus &nbsp;·&nbsp; "
+    "9 cell makers &nbsp;·&nbsp; 6 tracked materials &nbsp;·&nbsp; 10 shock scenarios &nbsp;·&nbsp; "
     "260-week horizon &nbsp;|&nbsp; Queen's University Belfast</p>",
     unsafe_allow_html=True,
 )
@@ -246,9 +268,9 @@ st.markdown(
 T_OVERVIEW, T_SCENARIO, T_OEM, T_STOCKS, T_FOCUS = st.tabs([
     "📊 Overview",
     "🔍 Scenario Analysis",
-    "🏭 OEM Breakdown",
+    "🏭 UK OEM",
     "⛏️ Supply Chain Stocks",
-    "🇬🇧 UK & China Focus",
+    "🇬🇧 UK Stress Focus",
 ])
 
 
@@ -279,8 +301,8 @@ with T_OVERVIEW:
         st.metric("UK OEM Volume", "175 k/yr",
                   delta="JLR · MINI · Vauxhall")
     with c6:
-        st.metric("BYD BEV Volume", "1,575 k/yr",
-                  delta="95% vertically integrated")
+        st.metric("Domestic Cell Share", "~0.2%",
+                  delta="AESC Sunderland")
 
     st.divider()
 
@@ -299,9 +321,9 @@ with T_OVERVIEW:
     for sc in selected:
         line(fig_ov, WEEKS, DATA[sc]["oem_production_k"],
              SC_LABELS[sc], SC_COLOURS[sc])
-    std_layout(fig_ov, "Global OEM Vehicle Production (k vehicles / week)", height=360)
+    std_layout(fig_ov, "UK OEM Vehicle Production (k vehicles / week)", height=360)
     fig_ov.update_yaxes(title_text="k vehicles / week", title_font=dict(size=10))
-    st.plotly_chart(fig_ov, use_container_width=True)
+    st.plotly_chart(fig_ov, width="stretch")
 
     # Summary table
     st.subheader("Scenario Impact Summary")
@@ -310,7 +332,7 @@ with T_OVERVIEW:
                     "Weeks below 90%", "Recovery week", "Cumulative loss (k veh)", "_color"]
     st.dataframe(
         disp.drop(columns=["_color"]).set_index("Scenario"),
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -344,7 +366,7 @@ with T_SCENARIO:
         line(fig, WEEKS, bl_prod, "Baseline", "#94a3b8", dash="dot", width=1.5)
         line(fig, WEEKS, d["oem_production_k"], SC_LABELS[sc_sel], col, width=2)
         std_layout(fig, "OEM Vehicle Production (k/week)", 280)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with r1c2:
         rel = [(p / max(bl_prod[i], 1e-6) - 1) * 100
@@ -355,7 +377,7 @@ with T_SCENARIO:
         line(fig, WEEKS, rel, "% vs baseline", col, fill=True)
         std_layout(fig, "Production Deviation vs Baseline (%)", 280)
         fig.update_yaxes(title_text="%")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 2: Cells + Cobalt/Graphite
     r2c1, r2c2 = st.columns(2)
@@ -365,7 +387,7 @@ with T_SCENARIO:
         line(fig, WEEKS, d["cell_production_gwh"], SC_LABELS[sc_sel], col, width=2)
         std_layout(fig, "Cell Production (GWh / week)", 280)
         fig.update_yaxes(title_text="GWh/week")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with r2c2:
         fig = go.Figure()
@@ -374,7 +396,7 @@ with T_SCENARIO:
         line(fig, WEEKS, d["stock_graphite_wk"],  "Graphite", hex_alpha(col, 0.6), dash="dash")
         std_layout(fig, "Cobalt & Graphite Stock (weeks of supply)", 280)
         fig.update_yaxes(title_text="weeks of supply")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Row 3: Harness/SiC + REE/Price
     r3c1, r3c2 = st.columns(2)
@@ -385,7 +407,7 @@ with T_SCENARIO:
         line(fig, WEEKS, d["stock_sic_wafer_wk"],  "SiC wafer", hex_alpha(col, 0.6), dash="dash")
         std_layout(fig, "Harness & SiC Wafer Stock (weeks of supply)", 280)
         fig.update_yaxes(title_text="weeks of supply")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with r3c2:
         fig = go.Figure()
@@ -394,7 +416,7 @@ with T_SCENARIO:
         line(fig, WEEKS, d["price_signal"],   "Price index", hex_alpha(col, 0.6), dash="dash")
         std_layout(fig, "REE Stock (wks) & Price Pressure Index", 280)
         fig.update_yaxes(title_text="weeks / index")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -402,9 +424,8 @@ with T_SCENARIO:
 # ═══════════════════════════════════════════════════════════════════════════════
 with T_OEM:
     st.markdown(
-        "Vehicle output by OEM group. **BYD** and **Other Chinese OEMs** are modelled separately "
-        "to expose differential CATL-dependency and vertical-integration advantages. "
-        "**UK OEM** (JLR / BMW MINI Oxford / Vauxhall) is a separate group capturing post-Brexit exposure.",
+        "UK EV output aggregates JLR, BMW MINI Oxford, Vauxhall Ellesmere Port, and other UK EV assembly exposure. "
+        "Scenario overlays show how global material, cell, and logistics shocks transmit into the UK production endpoint.",
     )
 
     sc_oem = st.multiselect(
@@ -415,43 +436,18 @@ with T_OEM:
         key="oem_sc",
     )
 
-    # Stacked area baseline
-    fig_stack = go.Figure()
-    oems = list(OEM_COLOURS.keys())
-    for oem in oems:
-        key = f"oem_{oem}_k"
-        fig_stack.add_trace(go.Scatter(
-            x=WEEKS, y=BL[key],
-            name=OEM_LABELS[oem],
-            stackgroup="baseline",
-            line=dict(color=OEM_COLOURS[oem], width=0.5),
-            fillcolor=hex_alpha(OEM_COLOURS[oem], 0.7),
-            mode="lines",
-        ))
-    std_layout(fig_stack, "Stacked OEM Production by Group — Baseline (k vehicles / week)", 360)
-    fig_stack.update_yaxes(title_text="k vehicles / week")
-    st.plotly_chart(fig_stack, use_container_width=True)
-
-    # BYD vs other Chinese + UK side by side
     c1, c2 = st.columns(2)
-    bl_byd   = np.array(BL["oem_byd_oem_k"])
-    bl_other = np.array(BL["oem_other_chinese_oem_k"])
     bl_uk    = np.array(BL["oem_uk_oem_k"])
 
     with c1:
         fig = go.Figure()
-        fig.add_hline(y=100, line_dash="dot", line_color="#94a3b8", line_width=0.8)
+        line(fig, WEEKS, bl_uk, "Baseline", "#94a3b8", dash="dot", width=1.5)
         for sc in sc_oem:
             d = DATA[sc]
-            byd_idx   = [v / max(bl_byd[i],   1e-6) * 100 for i, v in enumerate(d["oem_byd_oem_k"])]
-            other_idx = [v / max(bl_other[i],  1e-6) * 100 for i, v in enumerate(d["oem_other_chinese_oem_k"])]
-            line(fig, WEEKS, byd_idx,   f"BYD — {SC_LABELS[sc]}",
-                 SC_COLOURS[sc], width=2)
-            line(fig, WEEKS, other_idx, f"Other CN — {SC_LABELS[sc]}",
-                 hex_alpha(SC_COLOURS[sc], 0.5), dash="dash")
-        std_layout(fig, "BYD vs Other Chinese OEMs (Index: 100 = baseline)", 310)
-        fig.update_yaxes(title_text="Index (100 = baseline)")
-        st.plotly_chart(fig, use_container_width=True)
+            line(fig, WEEKS, d["oem_uk_oem_k"], SC_LABELS[sc], SC_COLOURS[sc], width=2)
+        std_layout(fig, "UK OEM Production (k vehicles / week)", 330)
+        fig.update_yaxes(title_text="k vehicles / week")
+        st.plotly_chart(fig, width="stretch")
 
     with c2:
         fig = go.Figure()
@@ -462,34 +458,34 @@ with T_OEM:
             line(fig, WEEKS, uk_idx, SC_LABELS[sc], SC_COLOURS[sc], width=2)
         std_layout(fig, "UK OEM Production Index (100 = baseline)", 310)
         fig.update_yaxes(title_text="Index (100 = baseline)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
-    # OEM reference table
-    st.subheader("OEM Group Reference")
+    c3, c4 = st.columns(2)
+    with c3:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["t1_battery_pack_k"], "Battery packs", "#3b82f6", width=2)
+        line(fig, WEEKS, BL["t1_harness_k"], "Harness", "#f97316", dash="dash")
+        line(fig, WEEKS, BL["t1_inverter_k"], "Inverter", "#a855f7", dash="dash")
+        line(fig, WEEKS, BL["t1_motor_k"], "Motor", "#10b981", dash="dash")
+        std_layout(fig, "Tier-1 Throughput Supporting UK Demand", 310)
+        fig.update_yaxes(title_text="k units / week")
+        st.plotly_chart(fig, width="stretch")
+
+    with c4:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["market_demand_gwh"], "UK market demand", "#06b6d4", width=2)
+        line(fig, WEEKS, BL["cell_production_gwh"], "Cell production", "#94a3b8", dash="dot")
+        std_layout(fig, "UK Demand vs Cell Supply Signal", 310)
+        fig.update_yaxes(title_text="GWh / week")
+        st.plotly_chart(fig, width="stretch")
+
+    st.subheader("UK OEM Reference")
     oem_ref = pd.DataFrame([
-        dict(Group=OEM_LABELS["byd_oem"],           Region="China",  Volume="1,575 k/yr", Share="11.25%", VI="95%",
-             Cell_suppliers="BYD Cells 95%, CATL 5%",
-             Key_vulnerability="Domestic supply disruption"),
-        dict(Group=OEM_LABELS["other_chinese_oem"],  Region="China",  Volume="6,825 k/yr", Share="48.75%", VI="50%",
-             Cell_suppliers="CATL 55%, CALB 15%, BYD 10%, Others 20%",
-             Key_vulnerability="CATL concentration (55%)"),
         dict(Group=OEM_LABELS["uk_oem"],             Region="UK",     Volume="175 k/yr",   Share="1.25%",  VI="5%",
              Cell_suppliers="Samsung SDI 30%, LG ES 25%, AESC UK 20%, SK On 15%, CATL 10%",
              Key_vulnerability="Post-Brexit RoO; no domestic gigafactory"),
-        dict(Group=OEM_LABELS["us_oem"],             Region="USA",    Volume="1,820 k/yr", Share="13.00%", VI="40%",
-             Cell_suppliers="Panasonic 40%, CATL 30%, LG ES 30%",
-             Key_vulnerability="CATL tariff (IRA / Section 301)"),
-        dict(Group=OEM_LABELS["german_oem"],         Region="EU",     Volume="1,505 k/yr", Share="10.75%", VI="20%",
-             Cell_suppliers="LG ES 35%, Samsung SDI 30%, SK On 25%, CATL 10%",
-             Key_vulnerability="Ukraine harness (JIT, 2 wk stock)"),
-        dict(Group=OEM_LABELS["korean_oem"],         Region="Korea",  Volume="1,120 k/yr", Share="8.00%",  VI="45%",
-             Cell_suppliers="SK On 50%, Samsung SDI 30%, LG ES 20%",
-             Key_vulnerability="REE motor magnets"),
-        dict(Group=OEM_LABELS["japanese_oem"],       Region="Japan",  Volume="980 k/yr",   Share="7.00%",  VI="30%",
-             Cell_suppliers="Panasonic 60%, Samsung SDI 20%, LG ES 20%",
-             Key_vulnerability="SiC inverter lead times"),
     ])
-    st.dataframe(oem_ref.set_index("Group"), use_container_width=True)
+    st.dataframe(oem_ref.set_index("Group"), width="stretch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -534,7 +530,7 @@ with T_STOCKS:
                 std_layout(fig, title, 280)
                 note_label = "weeks of supply" if key != "price_signal" else "index (1.0 = baseline)"
                 fig.update_yaxes(title_text=note_label)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 st.caption(note)
 
 
@@ -575,39 +571,41 @@ with T_FOCUS:
         line(fig_uk, WEEKS, uk_fric["oem_uk_oem_k"], "Brexit Friction", "#06b6d4", width=2, fill=True)
         line(fig_uk, WEEKS, uk_ua["oem_uk_oem_k"],   "Ukraine Harness", "#ef4444")
         std_layout(fig_uk, "UK OEM Production (k vehicles / week)", 280)
-        st.plotly_chart(fig_uk, use_container_width=True)
+        st.plotly_chart(fig_uk, width="stretch")
 
-    # ── China ─────────────────────────────────────────────────────────────────
+    # ── Upstream exposure ─────────────────────────────────────────────────────
     with cn_col:
         st.markdown(
             "<div style='border:1px solid #ef4444;border-radius:10px;padding:16px'>"
-            "<h3 style='color:#ef4444;margin-bottom:6px'>🇨🇳 Chinese EV Manufacturers</h3>"
-            "<p style='color:#94a3b8;font-size:0.8rem'>BYD (1,575 k BEV, 95% VI, Blade LFP) "
-            "vs Other Chinese OEMs (6,825 k — SAIC, Geely, NIO, Xpeng, Li Auto, GAC — "
-            "55% CATL-dependent).</p></div>",
+            "<h3 style='color:#ef4444;margin-bottom:6px'>Upstream China Exposure</h3>"
+            "<p style='color:#94a3b8;font-size:0.8rem'>The UK endpoint remains exposed to "
+            "CATL concentration, China graphite controls, and China rare-earth magnet restrictions "
+            "through imported cells, packs, motors, and materials.</p></div>",
             unsafe_allow_html=True,
         )
         st.markdown("")
 
         catl_d  = DATA["china_catl_disruption"]
-        drc_d   = DATA["drc_cobalt"]
-        bl_byd_arr   = np.array(BL["oem_byd_oem_k"])
-        bl_other_arr = np.array(BL["oem_other_chinese_oem_k"])
-        catl_peak = (1 - min(catl_d["cell_production_gwh"]) / max(BL["cell_production_gwh"][:4])) * 100
+        graphite_d = DATA["china_graphite"]
+        ree_d = DATA["china_ree_restriction"]
+        catl_rel = np.array(catl_d["cell_production_gwh"]) / np.maximum(np.array(BL["cell_production_gwh"]), 1e-6)
+        catl_peak = max(0.0, (1 - catl_rel.min()) * 100)
+        graphite_min = min(graphite_d["stock_graphite_wk"])
+        ree_min = min(ree_d["stock_ree_wk"])
 
         kc1, kc2, kc3, kc4 = st.columns(4)
-        kc1.metric("BYD Volume", "1,575 k/yr", "BYD AR 2023")
-        kc2.metric("BYD Vert. Integ.", "95%", "highest in industry")
-        kc3.metric("Other CN CATL exp.", "55%", "concentration risk")
-        kc4.metric("CATL disruption", f"{catl_peak:.1f}%", "cell supply peak loss")
+        kc1.metric("CATL share", "37%", "global cells")
+        kc2.metric("Graphite floor", f"{graphite_min:.1f} wk", "China permit shock")
+        kc3.metric("REE floor", f"{ree_min:.1f} wk", "magnet shock")
+        kc4.metric("CATL disruption", f"{catl_peak:.1f}%", "cell peak loss")
 
         fig_cn = go.Figure()
-        line(fig_cn, WEEKS, bl_byd_arr,   "BYD baseline",       "#94a3b8", dash="dot", width=1.5)
-        line(fig_cn, WEEKS, bl_other_arr, "Other CN baseline",  "#64748b", dash="dot", width=1.5)
-        line(fig_cn, WEEKS, catl_d["oem_byd_oem_k"],          "BYD — CATL disruption",      "#ef4444", width=2)
-        line(fig_cn, WEEKS, catl_d["oem_other_chinese_oem_k"],"Other CN — CATL disruption", "#f97316", width=2)
-        std_layout(fig_cn, "BYD vs Other Chinese OEM — CATL Disruption (k/week)", 280)
-        st.plotly_chart(fig_cn, use_container_width=True)
+        line(fig_cn, WEEKS, BL["oem_uk_oem_k"], "UK baseline", "#94a3b8", dash="dot", width=1.5)
+        line(fig_cn, WEEKS, catl_d["oem_uk_oem_k"], "UK output — CATL disruption", "#ef4444", width=2)
+        line(fig_cn, WEEKS, graphite_d["oem_uk_oem_k"], "UK output — graphite controls", "#ec4899", width=2)
+        line(fig_cn, WEEKS, ree_d["oem_uk_oem_k"], "UK output — REE restriction", "#10b981", width=2)
+        std_layout(fig_cn, "UK Output Under China-Linked Upstream Shocks", 280)
+        st.plotly_chart(fig_cn, width="stretch")
 
     st.divider()
 
@@ -623,7 +621,7 @@ with T_FOCUS:
         line(fig, WEEKS, DATA["uk_supply_chain_friction"]["stock_harness_wk"],
              "Harness stock (wks)", "#f97316", dash="dash")
         std_layout(fig, "UK Supply Chain Friction — Production & Harness Stock", 290)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption("−10% throughput yr 1, −5% yr 2. Harness delivery −8% for 26 weeks. "
                    "Calibrated to SMMT 2023 post-Brexit impact assessment.")
 
@@ -633,11 +631,11 @@ with T_FOCUS:
              "Cell production (Baseline)", "#94a3b8", dash="dot", width=1.5)
         line(fig, WEEKS, DATA["china_catl_disruption"]["cell_production_gwh"],
              "Cell production (CATL disruption)", "#dc2626", width=2, fill=True)
-        line(fig, WEEKS, DATA["china_catl_disruption"]["oem_production_k"],
-             "Global OEM output", "#f97316", dash="dash")
+        line(fig, WEEKS, DATA["china_catl_disruption"]["oem_uk_oem_k"],
+             "UK OEM output", "#f97316", dash="dash")
         std_layout(fig, "CATL Disruption — Cell Supply Impact (−45% for 65 weeks)", 290)
         fig.update_yaxes(title_text="GWh or k veh / week")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption("Ningde cluster scenario. Quantifies cost of 37% global cell supply "
                    "concentration in a single manufacturer.")
 
@@ -646,44 +644,33 @@ with T_FOCUS:
         fig = go.Figure()
         fig.add_hline(y=100, line_dash="dot", line_color="#94a3b8", line_width=0.8)
         for sc in SHOCK_SCS:
-            byd_idx   = [v / max(bl_byd_arr[i],   1e-6) * 100
-                         for i, v in enumerate(DATA[sc]["oem_byd_oem_k"])]
-            other_idx = [v / max(bl_other_arr[i], 1e-6) * 100
-                         for i, v in enumerate(DATA[sc]["oem_other_chinese_oem_k"])]
-            line(fig, WEEKS, byd_idx,   f"BYD — {SC_LABELS[sc]}",
-                 SC_COLOURS[sc], width=1.6, showlegend=True)
-            line(fig, WEEKS, other_idx, f"Other — {SC_LABELS[sc]}",
-                 hex_alpha(SC_COLOURS[sc], 0.4), dash="dash", showlegend=False)
-        std_layout(fig, "BYD (solid) vs Other Chinese OEMs (dashed) — All Scenarios", 310, show_legend=True)
+            uk_idx = [v / max(bl_uk[i], 1e-6) * 100 for i, v in enumerate(DATA[sc]["oem_uk_oem_k"])]
+            line(fig, WEEKS, uk_idx, SC_LABELS[sc], SC_COLOURS[sc], width=1.6, showlegend=True)
+        std_layout(fig, "UK OEM Production Index — All Scenarios", 310, show_legend=True)
         fig.update_yaxes(title_text="Index (100 = baseline)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with r2c2:
-        # Radar / bar chart showing peak loss by OEM for key scenarios
+        # Bar chart showing peak UK production loss by key scenario
         sc_compare = ["ukraine_harness", "drc_cobalt", "china_catl_disruption",
                       "uk_supply_chain_friction", "china_ree_restriction"]
-        oem_keys = list(OEM_COLOURS.keys())
-        bl_oem_means = {k: np.array(BL[f"oem_{k}_k"]).mean() for k in oem_keys}
-
-        fig = go.Figure()
+        bl_arr = np.array(BL["oem_uk_oem_k"])
+        labels, losses = [], []
         for sc in sc_compare:
-            losses = []
-            for k in oem_keys:
-                arr = np.array(DATA[sc][f"oem_{k}_k"])
-                bl_m = max(bl_oem_means[k], 1e-6)
-                loss = max(0.0, (1 - arr.min() / bl_m) * 100)
-                losses.append(round(loss, 1))
-            fig.add_trace(go.Bar(
-                name=SC_LABELS[sc],
-                x=[OEM_LABELS[k] for k in oem_keys],
-                y=losses,
-                marker_color=SC_COLOURS[sc],
-            ))
-        std_layout(fig, "Peak Production Loss (%) by OEM Group & Scenario", 310)
-        fig.update_layout(barmode="group")
+            arr = np.array(DATA[sc]["oem_uk_oem_k"])
+            rel = arr / np.maximum(bl_arr[:len(arr)], 1e-6)
+            labels.append(SC_LABELS[sc])
+            losses.append(round(max(0.0, (1 - rel.min()) * 100), 1))
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=labels,
+            y=losses,
+            marker_color=[SC_COLOURS[sc] for sc in sc_compare],
+        ))
+        std_layout(fig, "Peak UK Production Loss (%) by Scenario", 310, show_legend=False)
         fig.update_xaxes(tickangle=-30, tickfont=dict(size=8))
         fig.update_yaxes(title_text="Peak loss (%)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.divider()
 
@@ -700,7 +687,7 @@ with T_FOCUS:
         dict(Maker="SK On",       Country="South Korea",  Capacity_GWh=41.1,  Share="5.0%",  LFP="0%",  NMC="100%",Cobalt_exposure="Full"),
         dict(Maker="Others",      Country="Mixed",        Capacity_GWh=105.2, Share="12.8%", LFP="50%", NMC="50%", Cobalt_exposure="Moderate"),
     ])
-    st.dataframe(cell_ref.set_index("Maker"), use_container_width=True)
+    st.dataframe(cell_ref.set_index("Maker"), width="stretch")
     st.caption("★ = newly added in model v2.0. Sources: IEA GEO 2024; SNE Research 2023; "
                "AESC press release Nov 2023; CALB IPO Prospectus 2022.")
 
