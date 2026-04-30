@@ -217,6 +217,28 @@
     @media (max-width: 700px) {
       #view-structure { padding: 14px; }
     }
+
+    /* ── ABM Model Integration Panel ── */
+    .abm-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-top: 24px; }
+    .abm-panel h3 { font-size: .9rem; font-weight: 600; margin-bottom: 4px; }
+    .abm-sub { font-size: .77rem; color: var(--muted); margin-bottom: 14px; line-height: 1.5; max-width: 820px; }
+    .abm-tier-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .abm-tier-card { border-radius: 8px; padding: 12px 14px; }
+    .abm-tier-card h4 { font-size: .76rem; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+    .abm-agents-list { display: flex; flex-direction: column; gap: 5px; }
+    .abm-agent { background: var(--surface); border-radius: 5px; padding: 6px 9px; border-left: 2px solid transparent; }
+    .abm-agent .abn { font-size: .74rem; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .abm-agent .aba { font-size: .63rem; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; padding: 1px 5px; border-radius: 3px; color: #fff; display: inline-block; margin-bottom: 2px; }
+    .abm-agent .abs { font-size: .68rem; color: var(--muted); }
+    .sim-callout { display: flex; align-items: center; justify-content: space-between; background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.25); border-radius: 8px; padding: 12px 18px; flex-wrap: wrap; gap: 12px; }
+    .sim-callout .sct { font-size: .82rem; font-weight: 600; color: var(--text); }
+    .sim-callout .scs { font-size: .72rem; color: var(--muted); margin-top: 3px; }
+    .sim-btn { background: var(--accent); color: #fff; border: none; padding: 8px 18px; border-radius: 7px; font-size: .8rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; white-space: nowrap; }
+    .sim-btn:hover { opacity: .85; }
+    .industry-map-note { font-size: .73rem; color: var(--muted); background: rgba(16,185,129,.06); border: 1px solid rgba(16,185,129,.2); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; }
+    .industry-map-note strong { color: var(--accent2); }
+    @media (max-width: 900px) { .abm-tier-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .abm-tier-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -281,13 +303,13 @@
   <div id="wb-loading" class="loading"><span class="spinner"></span>Fetching from World Bank API…</div>
   <div id="country-grid" class="country-grid" style="display:none"></div>
   <div id="wb-cite" style="display:none;font-size:.72rem;color:var(--muted);margin-bottom:28px;">
-    Source: <a href="https://data.worldbank.org/" target="_blank" style="color:var(--accent)">World Bank Open Data</a> — Indicators: <code>NV.IND.MANF.ZS</code> (Manufacturing % GDP), <code>TX.VAL.TECH.MF.ZS</code> (High-tech exports % manufactured exports), <code>NY.GDP.MKTP.CD</code> (GDP current US$). Most recent available year shown.
+    Source: <a href="https://data.worldbank.org/" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">World Bank Open Data</a> — Indicators: <code>NV.IND.MANF.ZS</code> (Manufacturing % GDP), <code>TX.VAL.TECH.MF.ZS</code> (High-tech exports % manufactured exports), <code>NY.GDP.MKTP.CD</code> (GDP current US$). Most recent available year shown.
   </div>
 
   <!-- USGS Critical Minerals Table — static but from real published USGS MCS 2024 report -->
   <div class="section-title">Critical Mineral Supply — Top Producers</div>
   <div class="section-sub">
-    Source: <a href="https://pubs.usgs.gov/periodicals/mcs2024/mcs2024.pdf" target="_blank" style="color:var(--accent)">USGS Mineral Commodity Summaries 2024</a> (U.S. Geological Survey, January 2024). Data reflects 2023 reported production.
+    Source: <a href="https://pubs.usgs.gov/periodicals/mcs2024/mcs2024.pdf" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">USGS Mineral Commodity Summaries 2024</a> (U.S. Geological Survey, January 2024). Data reflects 2023 reported production.
   </div>
   <div class="tbl-wrap">
     <table>
@@ -391,7 +413,7 @@
   <!-- IEA Battery demand table -->
   <div class="section-title">EV Battery Demand by Region</div>
   <div class="section-sub">
-    Source: <a href="https://www.iea.org/reports/global-ev-outlook-2024" target="_blank" style="color:var(--accent)">IEA Global EV Outlook 2024</a>. Figures are GWh of battery demand deployed in new EVs.
+    Source: <a href="https://www.iea.org/reports/global-ev-outlook-2024" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">IEA Global EV Outlook 2024</a>. Figures are GWh of battery demand deployed in new EVs.
   </div>
   <div class="tbl-wrap">
     <table>
@@ -1260,6 +1282,113 @@ function renderSC() {
       </div>
     </div>`;
 
+  // ── ABM model integration panel ──────────────────────────────────────────
+  function abmAgent(name, archetype, archColor, detail, borderColor) {
+    return `<div class="abm-agent" style="border-left-color:${borderColor}">
+      <div class="abn">${name}</div>
+      <span class="aba" style="background:${archColor}">${archetype}</span>
+      <div class="abs">${detail}</div>
+    </div>`;
+  }
+
+  const abmTier0 = [
+    abmAgent('graphite_chn', 'StateBacked',      '#ef4444', 'China · 79% battery graphite', '#ef4444'),
+    abmAgent('ree_chn',      'StateBacked',      '#ef4444', 'China · 85% NdPr processing',  '#ef4444'),
+    abmAgent('cobalt_other', 'StateBacked',      '#ef4444', 'State-aligned cobalt flows',    '#ef4444'),
+    abmAgent('sic_china',    'StateBacked',      '#ef4444', 'China SiC wafer capacity',      '#ef4444'),
+    abmAgent('lithium_aus',  'WesternMiner',     '#f59e0b', 'Pilbara spodumene · 46%',       '#f59e0b'),
+    abmAgent('lithium_chl',  'WesternMiner',     '#f59e0b', 'Atacama brine · 30%',           '#f59e0b'),
+    abmAgent('cobalt_drc',   'WesternMiner',     '#f59e0b', 'DRC · 70% global share',        '#f59e0b'),
+    abmAgent('sic_coherent', 'WesternMiner',     '#f59e0b', 'Coherent Corp SiC boules',      '#f59e0b'),
+    abmAgent('sic_other',    'WesternMiner',     '#f59e0b', 'STMicro / Infineon SiC',        '#f59e0b'),
+    abmAgent('lithium_other','GreenfieldBuilder','#f97316', 'New-entrant capacity',           '#f97316'),
+    abmAgent('ree_other',    'GreenfieldBuilder','#f97316', 'Ex-China REE projects',          '#f97316'),
+    abmAgent('sic_wolfspeed','GreenfieldBuilder','#f97316', 'Wolfspeed · debt-financed',      '#f97316'),
+  ].join('');
+
+  const abmTier1 = [
+    abmAgent('catl',        'PlatformLeader',         '#3b82f6', '37% global · LFP+NMC',       '#3b82f6'),
+    abmAgent('byd_cells',   'PlatformLeader',         '#3b82f6', '14% global · 90% LFP',        '#3b82f6'),
+    abmAgent('calb ★',      'HyperScaleChallenger',   '#06b6d4', '5% · full-capacity push',      '#06b6d4'),
+    abmAgent('others_cells','HyperScaleChallenger',   '#06b6d4', '12.8% · SVOLT / REPT…',        '#06b6d4'),
+    abmAgent('lg_es',       'IncumbentUnderPressure', '#a855f7', '13% · NMC · share eroding',    '#a855f7'),
+    abmAgent('panasonic',   'IncumbentUnderPressure', '#a855f7', '7% · NCA · Tesla partner',     '#a855f7'),
+    abmAgent('samsung_sdi', 'IncumbentUnderPressure', '#a855f7', '6% · NMC 811',                 '#a855f7'),
+    abmAgent('sk_on',       'IncumbentUnderPressure', '#a855f7', '5% · NMC · Ford/VW supply',    '#a855f7'),
+    abmAgent('aesc_uk ★',   'IncumbentUnderPressure', '#a855f7', '0.2% · Sunderland, UK only',   '#a855f7'),
+  ].join('');
+
+  const abmTier2 = [
+    abmAgent('battery_pack','BatteryPackIntegrator',     '#10b981', 'JIT · order = demand exactly',    '#10b981'),
+    abmAgent('inverter',    'PremiumPowerElectronics',   '#6366f1', '16-wk lead · SiC-dependent',      '#6366f1'),
+    abmAgent('motor',       'EstablishedVolumeSupplier', '#14b8a6', '12-wk lead · REE NdFeB dep.',     '#14b8a6'),
+    abmAgent('harness',     'EstablishedVolumeSupplier', '#14b8a6', '6-wk lead · Ukraine exposure',    '#14b8a6'),
+  ].join('');
+
+  const abmTier3 = [
+    abmAgent('other_chinese_oem','EVNativeScaleAspirant',    '#d97706', '6,825 k/yr · NIO/Li Auto/Xpeng', '#d97706'),
+    abmAgent('byd_oem',          'base OEMAgent',            '#64748b', '1,575 k/yr · vertically int.',    '#64748b'),
+    abmAgent('us_oem',           'TransitioningLegacyOEM',   '#f43f5e', '1,820 k/yr · Tesla/GM/Ford',      '#f43f5e'),
+    abmAgent('german_oem',       'TransitioningLegacyOEM',   '#f43f5e', '1,505 k/yr · VW/BMW/Mercedes',    '#f43f5e'),
+    abmAgent('uk_oem ★',         'TransitioningLegacyOEM',   '#f43f5e', '175 k/yr · JLR/MINI/Vauxhall',   '#f43f5e'),
+    abmAgent('korean_oem',       'ProfitableEstablishedOEM', '#059669', '1,120 k/yr · Hyundai/Kia',        '#059669'),
+    abmAgent('japanese_oem',     'ProfitableEstablishedOEM', '#059669', '980 k/yr · Toyota/Honda',          '#059669'),
+  ].join('');
+
+  const abmPanel = `
+    <div class="abm-panel">
+      <h3>🤖 4-Tier ABM Simulation Model — Agent Architecture</h3>
+      <div class="abm-sub">
+        The simulation model abstracts this 6-tier industry value chain into <strong>4 agent tiers</strong>
+        (Mineral Suppliers → Cell Manufacturers → Sub-system Suppliers → OEMs), with
+        <strong>13 behavioural archetypes</strong> across 32 agents. Each archetype implements a
+        qualitatively different decision rule — not just different parameters. The model runs a
+        260-week horizon with shock scenarios and system dynamics feedback loops.
+      </div>
+      <div class="industry-map-note">
+        ★ = agents newly calibrated in v3.0 &nbsp;|&nbsp;
+        <strong>Industry → Model mapping:</strong>
+        Tiers 0–1 (Raw Mining + Chemicals) → Model Tier 0 (Mineral Suppliers) &nbsp;·&nbsp;
+        Tier 2 (Component Mfg) → Model Tier 1 (Cell Manufacturers) &nbsp;·&nbsp;
+        Tier 3 (Sub-Systems) → Model Tier 2 (Sub-system Suppliers) &nbsp;·&nbsp;
+        Tier 4 (OEM Assembly) → Model Tier 3 (OEMs) &nbsp;·&nbsp;
+        Tier 5 (End Markets) → Model Tier 4 (read-only demand signal)
+      </div>
+      <div class="abm-tier-grid">
+        <div class="abm-tier-card" style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2)">
+          <h4 style="color:#fcd34d">⛏️ Tier 0 — Mineral Suppliers
+            <span style="font-weight:400;color:var(--muted);font-size:.68rem">12 agents · 3 archetypes</span>
+          </h4>
+          <div class="abm-agents-list">${abmTier0}</div>
+        </div>
+        <div class="abm-tier-card" style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2)">
+          <h4 style="color:#93c5fd">🔋 Tier 1 — Cell Manufacturers
+            <span style="font-weight:400;color:var(--muted);font-size:.68rem">9 agents · 3 archetypes</span>
+          </h4>
+          <div class="abm-agents-list">${abmTier1}</div>
+        </div>
+        <div class="abm-tier-card" style="background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.2)">
+          <h4 style="color:#d8b4fe">⚙️ Tier 2 — Sub-system Suppliers
+            <span style="font-weight:400;color:var(--muted);font-size:.68rem">4 agents · 3 archetypes</span>
+          </h4>
+          <div class="abm-agents-list">${abmTier2}</div>
+        </div>
+        <div class="abm-tier-card" style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2)">
+          <h4 style="color:#6ee7b7">🏭 Tier 3 — OEMs
+            <span style="font-weight:400;color:var(--muted);font-size:.68rem">7 agents · 3 archetypes</span>
+          </h4>
+          <div class="abm-agents-list">${abmTier3}</div>
+        </div>
+      </div>
+      <div class="sim-callout">
+        <div>
+          <div class="sct">🚀 Interactive Simulation Dashboard (Streamlit)</div>
+          <div class="scs">Run 10 shock scenarios · 260-week horizon · 13 archetypes · Live World Bank data · UK OEM focus</div>
+        </div>
+        <a href="https://share.streamlit.io" class="sim-btn" target="_blank" rel="noopener noreferrer">Launch Simulation →</a>
+      </div>
+    </div>`;
+
   el.innerHTML = `
     <div class="sc-header">
       <h2>EV Supply Chain Structure — 6-Tier Value Chain Map</h2>
@@ -1273,7 +1402,8 @@ function renderSC() {
       <div class="vuln-grid">${vulns}</div>
     </div>
     <div style="margin-bottom:24px"></div>
-    ${sdvPanel}`;
+    ${sdvPanel}
+    ${abmPanel}`;
 }
 
 function filterSC(chain, btn) {

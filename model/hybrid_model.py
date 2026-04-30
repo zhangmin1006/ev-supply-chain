@@ -37,6 +37,7 @@ from .config import (
 )
 from .sd_model import SDModel, BASELINE_WK
 from .financial_profiles import profile_for_agent, coverage_report, FOUR_TIER_AGENT_GROUPS
+from .data_source_calibration import apply_data_source_calibration
 from .agents import (
     MineralSupplierAgent, CellManufacturerAgent,
     Tier1SupplierAgent, OEMAgent, MarketAgent,
@@ -141,6 +142,10 @@ class EVSupplyChainModel:
             MARKETS[region]["gwh_2023"] * 1000.0 / MARKETS[region]["avg_kwh_veh"]
             for region in self._active_market_regions
         )
+        self.market_scope_fraction = (
+            1.0 if focus_region is None
+            else self.active_market_gwh_2023 / max(CELL_GLOBAL_GWH_2023, 1e-9)
+        )
 
         # ── Layers ──────────────────────────────────────────────────────────
         self.sd = SDModel(rng=self.rng)
@@ -199,6 +204,7 @@ class EVSupplyChainModel:
                         safety_stock_weeks=safety,
                         financial_profile=profile_for_agent(aid),
                     )
+                apply_data_source_calibration(a, country)
                 self._mineral_agents[aid] = a
 
     def _build_cell_agents(self) -> None:
@@ -209,7 +215,7 @@ class EVSupplyChainModel:
                 agent_id=f"cell_{name}", model=self,
                 name=name,
                 country=cfg["country"],
-                capacity_gwh_yr=cfg["capacity_gwh_yr"],
+                capacity_gwh_yr=cfg["capacity_gwh_yr"] * self.market_scope_fraction,
                 market_share=cfg["market_share"],
                 lfp_fraction=cfg["lfp_fraction"],
                 nmc_fraction=cfg["nmc_fraction"],
@@ -217,6 +223,7 @@ class EVSupplyChainModel:
                 recovery_rate_wk=cfg["recovery_rate_wk"],
                 financial_profile=profile_for_agent(f"cell_{name}"),
             )
+            apply_data_source_calibration(a, cfg["country"])
             self._cell_agents[name] = a
 
     def _build_tier1_agents(self) -> None:
@@ -243,6 +250,13 @@ class EVSupplyChainModel:
                 bullwhip_factor=BULLWHIP_FACTOR,
                 financial_profile=profile_for_agent(f"t1_{comp}"),
             )
+            calibration_region = {
+                "battery_pack": "mixed",
+                "inverter": "europe",
+                "motor": "mixed",
+                "harness": "uk",
+            }.get(comp, "mixed")
+            apply_data_source_calibration(a, calibration_region)
             self._tier1_agents[comp] = a
 
     def _build_oem_agents(self) -> None:
@@ -260,6 +274,7 @@ class EVSupplyChainModel:
                 vertical_integration=cfg.get("vertical_integration", 0.0),
                 financial_profile=profile_for_agent(f"oem_{name}"),
             )
+            apply_data_source_calibration(a, cfg["region"])
             self._oem_agents[name] = a
 
     def _build_market_agents(self) -> None:
@@ -643,6 +658,44 @@ class EVSupplyChainModel:
                 "growth_multiplier":   round(p.growth_multiplier, 3),
                 "shock_absorption":    round(p.shock_absorption, 3),
             })
+        return pd.DataFrame(rows)
+
+    def get_data_source_calibration_summary(self) -> pd.DataFrame:
+        """
+        Return the country/region data-source calibration applied to each agent.
+
+        This audits the bounded multipliers derived from the data-source
+        registry in index.html, currently using the World Bank country
+        indicators seeded in model.data_source_calibration.
+        """
+        rows = []
+        agent_groups = (
+            ("minerals", self._mineral_agents),
+            ("cells", self._cell_agents),
+            ("tier1", self._tier1_agents),
+            ("oem", self._oem_agents),
+        )
+        for layer, agents in agent_groups:
+            for key, agent in agents.items():
+                cal = getattr(agent, "data_source_calibration", None)
+                if cal is None:
+                    continue
+                rows.append({
+                    "layer": layer,
+                    "agent": key,
+                    "agent_id": agent.agent_id,
+                    "country_or_region": (
+                        getattr(agent, "data_source_region", None)
+                        or getattr(agent, "country", None)
+                        or getattr(agent, "region", None)
+                        or "mixed"
+                    ),
+                    "recovery_multiplier": round(cal.recovery_multiplier, 3),
+                    "inventory_multiplier": round(cal.inventory_multiplier, 3),
+                    "growth_multiplier": round(cal.growth_multiplier, 3),
+                    "shock_absorption": round(cal.shock_absorption, 3),
+                    "source_note": cal.source_note,
+                })
         return pd.DataFrame(rows)
 
     def get_shock_summary(self) -> Dict[str, Any]:
