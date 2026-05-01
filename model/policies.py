@@ -122,6 +122,12 @@ def apply_policy_packages(model, packages: Iterable[str] | None) -> None:
     if "full_industrial_strategy" in selected:
         _apply_full_strategy_overlay(model)
 
+    # Activate matching SD-layer policy effects
+    current_week = getattr(model, "week", 0)
+    if hasattr(model, "sd") and hasattr(model.sd, "activate_policy"):
+        for pkg in selected:
+            model.sd.activate_policy(pkg, current_week)
+
 
 def _apply_battery_sovereignty(model) -> None:
     for name, agent in model._cell_agents.items():

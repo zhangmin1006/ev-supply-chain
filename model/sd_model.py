@@ -85,7 +85,7 @@ from __future__ import annotations
 
 import numpy as np
 from collections import deque
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1.  Mineral sets
@@ -191,12 +191,13 @@ CHEM_COBALT_LAG:      float = 1.0 / 4.0   # cobalt price perception: 4-wk first-
 # 6.  Commodity price dynamics
 # ══════════════════════════════════════════════════════════════════════════════
 
-PRICE_ADJ_SPEED:     float = 0.05   # fraction of gap closed per week
-PRICE_FLOOR:         float = 0.10   # absolute floor (avoids log(0))
-PRICE_CEIL:          float = 6.00   # cap at 6 × baseline
-PRICE_ALPHA:         float = 1.50   # scarcity sensitivity scaling
-PRICE_SOFTPLUS_BETA: float = 4.0    # softplus sharpness
-PRICE_SIGNAL_ADJ_SPEED: float = 0.20
+PRICE_ADJ_SPEED:          float = 0.05   # fraction of gap closed per week (upward)
+PRICE_RECOVERY_MULT:      float = 1.5    # BUG-3 fix: downward price adj is 1.5× faster
+PRICE_FLOOR:              float = 0.10   # absolute floor (avoids log(0))
+PRICE_CEIL:               float = 6.00   # cap at 6 × baseline
+PRICE_ALPHA:              float = 1.50   # scarcity sensitivity scaling
+PRICE_SOFTPLUS_BETA:      float = 4.0    # softplus sharpness
+PRICE_SIGNAL_ADJ_SPEED:   float = 0.20
 PRICE_SIGNAL_FLOOR:     float = 0.60
 PRICE_SIGNAL_CEIL:      float = 3.00
 
@@ -278,7 +279,215 @@ BULLWHIP_SMOOTH: float = 0.10   # EWMA weight
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 10.  SDModel class
+# 10.  UK Government Policy Layer
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GovernmentPolicySD:
+    """
+    UK government policy effects on the SD layer.
+
+    Each package applies a distinct set of SD-level parameter adjustments that
+    complement the ABM-level agent modifications in policies.py. Effects ramp
+    in linearly over RAMP_WEEKS to avoid discontinuous state jumps at activation.
+
+    Policy–SD coupling map
+    ----------------------
+    battery_sovereignty        → lower CAPEX trigger, faster gigafactory build,
+                                  demand growth boost, recycling reduces mineral outflow
+    tier1_resilience           → higher component buffer targets, faster backlog clearance,
+                                  better bullwhip visibility
+    critical_minerals_security → strategic mineral targets raised, price volatility
+                                  dampened, mineral supply secured
+    full_industrial_strategy   → all above plus cross-cutting economy-wide multipliers
+    """
+
+    RAMP_WEEKS: int = 13  # 3-month ramp-in so policy has gradual effect
+
+    def __init__(self) -> None:
+        self._active: Dict[str, int] = {}  # package_name -> activation _week
+        self._week: int = 0
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def activate(self, package_name: str, current_week: int = 0) -> None:
+        """Register a policy package. Idempotent — re-activation is ignored."""
+        if package_name not in self._active:
+            self._active[package_name] = current_week
+
+    def tick(self) -> None:
+        """Advance internal week counter. Called once per SD update() call."""
+        self._week += 1
+
+    def _ramp(self, package_name: str) -> float:
+        """Linear ramp [0, 1]: 0 on activation week, 1.0 after RAMP_WEEKS."""
+        if package_name not in self._active:
+            return 0.0
+        elapsed = self._week - self._active[package_name]
+        return min(1.0, max(0.0, elapsed / self.RAMP_WEEKS))
+
+    # ── Package ramp shortcuts ─────────────────────────────────────────────────
+
+    @property
+    def bat_sov(self) -> float:
+        return self._ramp("battery_sovereignty")
+
+    @property
+    def t1_res(self) -> float:
+        return self._ramp("tier1_resilience")
+
+    @property
+    def crit_min(self) -> float:
+        return self._ramp("critical_minerals_security")
+
+    @property
+    def full_strat(self) -> float:
+        return self._ramp("full_industrial_strategy")
+
+    @property
+    def any_active(self) -> bool:
+        return bool(self._active)
+
+    # ── Computed policy effects ───────────────────────────────────────────────
+
+    @property
+    def capex_trigger_reduction(self) -> float:
+        """
+        Reduce CAPEX trigger threshold (de-risk cell investment via offtake support).
+        Battery sovereignty lowers trigger by up to 0.08 (0.85 → 0.77).
+        Full strategy adds a further 0.03.
+        """
+        return 0.08 * self.bat_sov + 0.03 * self.full_strat
+
+    @property
+    def build_speed_mult(self) -> float:
+        """
+        Multiplier on Erlang construction stage rate (faster gigafactory build).
+        Battery sovereignty: grants reduce effective build time by up to 20%.
+        Full strategy: additional 10% via skills and energy infrastructure.
+        """
+        return 1.0 + 0.20 * self.bat_sov + 0.10 * self.full_strat
+
+    @property
+    def demand_growth_boost_wk(self) -> float:
+        """
+        Additional absolute weekly EV demand growth rate.
+        Battery sovereignty: purchase incentives and fleet mandates (+0.15%/wk).
+        Full strategy: ZEV mandate acceleration (+0.08%/wk additive).
+        """
+        return 0.0015 * self.bat_sov + 0.0008 * self.full_strat
+
+    @property
+    def price_adj_speed_mult(self) -> float:
+        """
+        Multiplier on commodity price adjustment speed.
+        Critical minerals: strategic reserves buffer price spikes → slower escalation.
+        Full strategy: additional damping from coordinated procurement.
+        """
+        return max(0.4, 1.0 - 0.30 * self.crit_min - 0.10 * self.full_strat)
+
+    @property
+    def price_recovery_boost(self) -> float:
+        """
+        Additional multiplier on downward price recovery speed (strategic reserve drawdown).
+        Critical minerals: reserves released during shortage accelerate recovery.
+        """
+        return 0.50 * self.crit_min
+
+    @property
+    def mineral_outflow_reduction(self) -> Dict[str, float]:
+        """
+        Fractional reduction in virgin mineral outflow per unit production (recycling
+        and urban mining).  0.12 means 12% of mineral demand met by recycled content.
+        Capped at 35% — current technology limit for closed-loop EV battery recycling.
+        """
+        r: Dict[str, float] = {}
+        if self.bat_sov > 0:
+            r["lithium"]  = 0.08 * self.bat_sov
+            r["cobalt"]   = 0.12 * self.bat_sov
+            r["graphite"] = 0.10 * self.bat_sov
+        if self.crit_min > 0:
+            r["cobalt"]    = max(r.get("cobalt", 0.0),   0.15 * self.crit_min)
+            r["graphite"]  = max(r.get("graphite", 0.0), 0.15 * self.crit_min)
+            r["ree"]       = 0.10 * self.crit_min
+            r["sic_wafer"] = 0.08 * self.crit_min
+        if self.full_strat > 0:
+            for m in ("lithium", "cobalt", "graphite", "ree", "sic_wafer"):
+                r[m] = min(0.35, r.get(m, 0.0) + 0.05 * self.full_strat)
+        return r
+
+    @property
+    def mineral_target_mult(self) -> Dict[str, float]:
+        """
+        Multiplier on SD mineral stock targets to reflect strategic buffer policy.
+        Raised targets prevent strategic buffer stocks from reading as 'surplus'
+        and driving prices artificially low.
+        """
+        if self.crit_min <= 0.0 and self.full_strat <= 0.0:
+            return {}
+        cm, fs = self.crit_min, self.full_strat
+        return {
+            "cobalt":    1.0 + 0.50 * cm + 0.10 * fs,
+            "graphite":  1.0 + 0.50 * cm + 0.10 * fs,
+            "ree":       1.0 + 0.75 * cm + 0.10 * fs,
+            "sic_wafer": 1.0 + 0.75 * cm + 0.10 * fs,
+            "lithium":   1.0 + 0.20 * cm + 0.05 * fs,
+        }
+
+    @property
+    def component_target_mult(self) -> Dict[str, float]:
+        """
+        Multiplier on component stock targets (Tier-1 resilience transformation grants).
+        Higher targets incentivise agents to build strategic inventory buffers.
+        """
+        if self.t1_res <= 0.0 and self.full_strat <= 0.0:
+            return {}
+        tr, fs = self.t1_res, self.full_strat
+        return {
+            "cells":     1.0 + 0.25 * tr + 0.05 * fs,
+            "packs":     1.0 + 0.25 * tr + 0.05 * fs,
+            "inverters": 1.0 + 0.25 * tr + 0.05 * fs,
+            "motors":    1.0 + 0.25 * tr + 0.05 * fs,
+            "harness":   1.0 + 0.45 * tr + 0.05 * fs,
+        }
+
+    @property
+    def bullwhip_smooth_mult(self) -> float:
+        """
+        Multiplier on BULLWHIP_SMOOTH — higher means EWMA tracks order variance
+        faster, giving a more accurate real-time signal.
+        T1 resilience funds supply chain data visibility (digital twin, EDI links).
+        """
+        return 1.0 + 0.30 * self.t1_res + 0.15 * self.full_strat
+
+    @property
+    def backlog_clearance_boost(self) -> float:
+        """
+        Extra fraction of weekly production surplus applied to backlog clearance.
+        T1 resilience improves OEM scheduling and delivery coordination.
+        """
+        return 0.30 * self.t1_res + 0.20 * self.full_strat
+
+    # ── Reporting ─────────────────────────────────────────────────────────────
+
+    def summary(self) -> Dict:
+        return {
+            "active_packages":          list(self._active.keys()),
+            "ramp_battery_sovereignty": round(self.bat_sov, 3),
+            "ramp_tier1_resilience":    round(self.t1_res, 3),
+            "ramp_crit_minerals":       round(self.crit_min, 3),
+            "ramp_full_strategy":       round(self.full_strat, 3),
+            "capex_trigger_reduction":  round(self.capex_trigger_reduction, 4),
+            "build_speed_mult":         round(self.build_speed_mult, 3),
+            "demand_growth_boost_wk":   round(self.demand_growth_boost_wk, 5),
+            "price_adj_speed_mult":     round(self.price_adj_speed_mult, 3),
+            "price_recovery_boost":     round(self.price_recovery_boost, 3),
+            "bullwhip_smooth_mult":     round(self.bullwhip_smooth_mult, 3),
+            "backlog_clearance_boost":  round(self.backlog_clearance_boost, 3),
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11.  SDModel class
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SDModel:
@@ -304,6 +513,9 @@ class SDModel:
 
     def __init__(self, rng: np.random.Generator | None = None):
         self.rng = rng or np.random.default_rng(42)
+
+        # ── UK Government Policy Layer ────────────────────────────────────────
+        self.policy = GovernmentPolicySD()
 
         # ── Physical on-hand inventory stocks ─────────────────────────────────
         self.stocks: Dict[str, float] = {
@@ -363,6 +575,11 @@ class SDModel:
         # ── Cumulative supply expansion multipliers ───────────────────────────
         self._mineral_supply_scale: Dict[str, float] = {m: 1.0 for m in ALL_MINERALS}
 
+        # ── Cached exact cell utilisation (updated each step from ABM flows) ─
+        # BUG-1 fix: initialised at 2023 approximate utilisation (822/1500 = 0.548).
+        # Updated in _step_cell_capacity() using actual weekly cell output.
+        self._last_cell_util: float = EV_DEMAND_2023_GWH_YR / CELL_CAPACITY_2023_GWH_YR
+
         # ── Bullwhip memory ───────────────────────────────────────────────────
         self._prev_orders_k:    float = BASELINE_WK["packs"]
         self._prev_shipments_k: float = BASELINE_WK["packs"]
@@ -391,6 +608,15 @@ class SDModel:
     # Public interface
     # ──────────────────────────────────────────────────────────────────────────
 
+    def activate_policy(self, package_name: str, current_week: int = 0) -> None:
+        """
+        Activate a UK government policy package in the SD layer.
+        Called by policies.py alongside the ABM-level agent modifications.
+        Valid names: 'battery_sovereignty', 'tier1_resilience',
+                     'critical_minerals_security', 'full_industrial_strategy'.
+        """
+        self.policy.activate(package_name, current_week)
+
     def compute_input_fractions(self) -> Dict[str, float]:
         """
         Compute availability fractions using MEASURED (perceived) stocks.
@@ -405,8 +631,11 @@ class SDModel:
         Also refreshes price_signals for agent use.
         """
         fracs: Dict[str, float] = {}
+        min_tgt  = self.policy.mineral_target_mult
+        comp_tgt = self.policy.component_target_mult
         for name in TARGET_WEEKS:
-            target = TARGET_WEEKS[name] * BASELINE_WK[name]
+            policy_mult = min_tgt.get(name, comp_tgt.get(name, 1.0))
+            target = TARGET_WEEKS[name] * BASELINE_WK[name] * policy_mult
             measured = self._measured_stocks.get(name, self.stocks[name])
             fracs[name] = min(2.0, measured / max(target, 1e-9))
         self.input_fractions = fracs
@@ -435,6 +664,9 @@ class SDModel:
           lfp_gwh, nmc_gwh, cell_capacity_gwh_yr
           total_oem_prod_k, total_demand_k, total_demand_gwh_wk, order_rate_k
         """
+        # 0. Advance policy ramp counter
+        self.policy.tick()
+
         # 1. Advance supply expansion multipliers
         for mineral in ALL_MINERALS:
             self._mineral_supply_scale[mineral] *= (
@@ -447,9 +679,12 @@ class SDModel:
         # 3. Component stocks (no transport pipeline — handled by ABM agents)
         self._update_component_stocks(flows)
 
-        # 4. Cap stocks at 4 × target to prevent unbounded accumulation
+        # 4. Cap stocks at 4 × target (policy-adjusted targets raise the cap)
+        min_tgt  = self.policy.mineral_target_mult
+        comp_tgt = self.policy.component_target_mult
         for name in TARGET_WEEKS:
-            cap = 4.0 * TARGET_WEEKS[name] * BASELINE_WK[name]
+            policy_mult = min_tgt.get(name, comp_tgt.get(name, 1.0))
+            cap = 4.0 * TARGET_WEEKS[name] * BASELINE_WK[name] * policy_mult
             self.stocks[name] = min(self.stocks[name], cap)
 
         # 5. Update perceived stocks (first-order measurement lag)
@@ -502,6 +737,12 @@ class SDModel:
         snap["ev_demand_gwh_yr"]  = self.ev_demand_gwh_yr
         snap["oem_backlog_k"]     = self.oem_backlog_k
         snap["bullwhip_index"]    = self.bullwhip_index
+        # Policy ramps
+        if self.policy.any_active:
+            snap["policy_bat_sov"]   = self.policy.bat_sov
+            snap["policy_t1_res"]    = self.policy.t1_res
+            snap["policy_crit_min"]  = self.policy.crit_min
+            snap["policy_full_strat"] = self.policy.full_strat
         self.history.append(snap)
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -513,11 +754,15 @@ class SDModel:
         Advance the in-transit pipeline for each mineral and update on-hand stock.
 
         For agent-controlled minerals (Li, Co, Gr, REE, SiC):
-          new_supply = ABM agent output × expansion scale × stochastic noise
+          new_supply = ABM agent output × stochastic noise
+          (BUG-2 fix: supply scale NOT applied — ABM agents already model their
+          own growth via financial_profiles calibration; applying scale on top
+          caused unconditional stock accumulation to the 4× cap.)
 
         For copper (no ABM agent):
-          new_supply defaults to BASELINE_WK["copper"] × expansion scale × noise,
-          representing a stable exogenous upstream market.
+          new_supply = BASELINE_WK["copper"] × expansion scale × noise,
+          representing a stable exogenous upstream market where supply scale
+          is the only growth mechanism.
 
         The pipeline provides a hard physical transport delay: material ordered
         at time t arrives at time t + MINERAL_TRANSPORT_WK weeks.
@@ -535,20 +780,23 @@ class SDModel:
             noise = float(np.clip(self.rng.normal(0.0, vol), -3 * vol, 3 * vol))
             noise_factor = max(0.5, min(2.0, 1.0 + noise))
 
-            # New supply entering the transit pipeline this week
-            new_in_transit = (
-                agent_supply
-                * self._mineral_supply_scale[mineral]
-                * noise_factor
-            )
+            # New supply entering the transit pipeline this week.
+            # BUG-2 fix: expansion scale only applied to non-agent (copper) mineral.
+            if mineral in AGENT_MINERALS:
+                new_in_transit = agent_supply * noise_factor
+            else:
+                new_in_transit = agent_supply * self._mineral_supply_scale[mineral] * noise_factor
 
             # FIFO transit queue: pop oldest arrival, push new supply
             queue = self._mineral_transit[mineral]
             arrived = queue.popleft()
             queue.append(new_in_transit)
 
-            # Outflow (mineral consumed this week by downstream agents)
+            # Outflow (mineral consumed this week by downstream agents).
+            # Policy recycling: reduce virgin outflow by recycled-content fraction.
             outflow = flows.get(f"{mineral}_out", 0.0)
+            recycle_frac = self.policy.mineral_outflow_reduction.get(mineral, 0.0)
+            outflow = outflow * (1.0 - recycle_frac)
 
             self.stocks[mineral] = max(0.0, self.stocks[mineral] + arrived - outflow)
 
@@ -592,21 +840,36 @@ class SDModel:
         When availability < 1 (shortage): softplus(+) grows → p* > 1
         When availability > 1 (surplus):  softplus(−) → 0 → p* < 1
         """
+        policy_speed_mult    = self.policy.price_adj_speed_mult
+        policy_recovery_mult = PRICE_RECOVERY_MULT + self.policy.price_recovery_boost
+        min_tgt = self.policy.mineral_target_mult
+
         for mineral in ALL_MINERALS:
             measured = max(
                 self._measured_stocks.get(mineral, self.stocks.get(mineral, 1e-9)),
                 1e-9,
             )
+            # Raise effective target for strategic-buffer minerals so reserves
+            # don't create a false surplus price signal.
             target = (
                 TARGET_WEEKS.get(mineral, MINERAL_TARGET_WK.get(mineral, 4.0))
                 * BASELINE_WK.get(mineral, 1.0)
+                * min_tgt.get(mineral, 1.0)
             )
             a = measured / max(target, 1e-9)
 
             scarcity = self._softplus(1.0 - a)
             p_star = max(PRICE_FLOOR, min(PRICE_CEIL, 1.0 + PRICE_ALPHA * scarcity))
 
-            p_new = self.prices[mineral] + PRICE_ADJ_SPEED * (p_star - self.prices[mineral])
+            # BUG-3 fix: asymmetric speed — recovery (downward) is faster than
+            # escalation, matching empirical commodity market mean-reversion.
+            # Policy: critical-minerals package further damps escalation speed
+            # and boosts recovery speed (strategic reserve drawdown effect).
+            if p_star < self.prices[mineral]:
+                adj_speed = PRICE_ADJ_SPEED * policy_recovery_mult
+            else:
+                adj_speed = PRICE_ADJ_SPEED * policy_speed_mult
+            p_new = self.prices[mineral] + adj_speed * (p_star - self.prices[mineral])
             self.prices[mineral] = max(PRICE_FLOOR, min(PRICE_CEIL, p_new))
 
     def _step_chemistry_mix(self) -> None:
@@ -640,8 +903,9 @@ class SDModel:
         )
         s_target = max(LFP_SHARE_MIN, min(LFP_SHARE_MAX, s_target))
 
-        # Asymmetric convergence: faster toward LFP (urgency) than back to NMC (inertia)
-        speed = CHEM_SHIFT_SPEED * (1.5 if s_target > self.lfp_share else 0.5)
+        # Asymmetric convergence: moderately faster toward LFP, moderately slower back.
+        # BUG-4 fix: reduced from (1.5/0.5) to (1.2/0.8) to prevent one-way hysteresis.
+        speed = CHEM_SHIFT_SPEED * (1.2 if s_target > self.lfp_share else 0.8)
         self.lfp_share += speed * (s_target - self.lfp_share)
         self.lfp_share = max(LFP_SHARE_MIN, min(LFP_SHARE_MAX, self.lfp_share))
 
@@ -763,8 +1027,16 @@ class SDModel:
         Total expected time from investment decision to first production:
           26 (planning) + 104 (build) = 130 weeks ≈ 2.5 years.
         """
-        util = self._cell_cap_utilisation()
-        excess_util = max(0.0, util - CAPEX_TRIGGER_UTIL)
+        # BUG-1 fix: use exact utilisation from actual ABM cell output rather than
+        # the stock-level proxy which was inverted (stock depletion gave util=0).
+        weekly_output = flows.get("cells_in", 0.0)
+        if weekly_output > 0.0:
+            self._last_cell_util = self.cell_capacity_utilisation_exact(weekly_output)
+        util = self._last_cell_util
+
+        # Battery sovereignty: offtake guarantees de-risk investment (lower trigger).
+        effective_trigger = CAPEX_TRIGGER_UTIL - self.policy.capex_trigger_reduction
+        excess_util = max(0.0, util - effective_trigger)
 
         # Investment rate (proportional control on excess utilisation) with a
         # price-margin modifier: high pack prices support capacity investment,
@@ -785,8 +1057,9 @@ class SDModel:
         self._cap_planning_queue.append(inv_wk)
         released = self._cap_planning_queue.popleft()   # exits planning; enters stage 1
 
-        # 3-stage Erlang construction pipeline (Euler integration)
-        stage_rate = CAP_ERLANG_N / CELL_CAPACITY_BUILD_WK   # per week per stage
+        # 3-stage Erlang construction pipeline (Euler integration).
+        # Battery sovereignty: grants shorten effective build time.
+        stage_rate = (CAP_ERLANG_N / CELL_CAPACITY_BUILD_WK) * self.policy.build_speed_mult
         d0 = released          - stage_rate * self._cap_stages[0]
         d1 = stage_rate * (self._cap_stages[0] - self._cap_stages[1])
         d2 = stage_rate * (self._cap_stages[1] - self._cap_stages[2])
@@ -826,10 +1099,10 @@ class SDModel:
         price_effect = 1.0 + (-0.30) * (price_signal - 1.0)
         price_effect = max(0.60, min(1.20, price_effect))
 
-        # Growth increment with price modulation
-        growth_increment = (
-            self.ev_demand_gwh_yr * EV_DEMAND_GROWTH_WK * price_effect
-        )
+        # Growth increment with price modulation.
+        # Battery sovereignty: EV purchase incentives and fleet mandates boost adoption.
+        effective_growth_wk = EV_DEMAND_GROWTH_WK + self.policy.demand_growth_boost_wk
+        growth_increment = self.ev_demand_gwh_yr * effective_growth_wk * price_effect
         # Stochastic demand noise (small, mean-zero)
         demand_noise = float(
             self.rng.normal(0.0, DEMAND_VOL)
@@ -848,14 +1121,16 @@ class SDModel:
                 0.90 * self.ev_demand_gwh_yr + 0.10 * market_gwh_wk * 52.0
             )
 
-        # OEM backlog: proper stock with shortfall inflow and surplus outflow
+        # OEM backlog: proper stock with shortfall inflow and surplus outflow.
+        # T1 resilience: improved scheduling coordination clears backlog faster.
         oem_prod_k  = flows.get("total_oem_prod_k", 0.0)
         demand_k    = flows.get("total_demand_k",   0.0)
         shortfall_k = max(0.0, demand_k - oem_prod_k)
         surplus_k   = max(0.0, oem_prod_k - demand_k)
+        clearance_rate = 0.5 + self.policy.backlog_clearance_boost
         self.oem_backlog_k = max(
             0.0,
-            self.oem_backlog_k + shortfall_k - surplus_k * 0.5,
+            self.oem_backlog_k + shortfall_k - surplus_k * clearance_rate,
         )
 
     def _step_bullwhip(self, flows: Dict[str, float]) -> None:
@@ -871,9 +1146,11 @@ class SDModel:
         total_comp_demand = vehicle_k * 4.0
 
         raw_bw = order_k / max(total_comp_demand, 1e-9)
+        # T1 resilience: digital supply chain visibility sharpens the EWMA signal.
+        effective_smooth = min(0.40, BULLWHIP_SMOOTH * self.policy.bullwhip_smooth_mult)
         self.bullwhip_index = (
-            (1.0 - BULLWHIP_SMOOTH) * self.bullwhip_index
-            + BULLWHIP_SMOOTH * raw_bw
+            (1.0 - effective_smooth) * self.bullwhip_index
+            + effective_smooth * raw_bw
         )
         self._prev_orders_k    = order_k
         self._prev_shipments_k = vehicle_k
@@ -884,17 +1161,14 @@ class SDModel:
 
     def _cell_cap_utilisation(self) -> float:
         """
-        Approximate capacity utilisation from cells inventory proxy.
-        util_proxy ≈ 1 when cells are near target → ~70 % utilisation.
-        Exact utilisation computed by cell_capacity_utilisation_exact().
+        Returns the cached exact utilisation last computed from ABM cell output.
+
+        BUG-1 fix: the previous stock-level proxy was inverted — stock depletion
+        (demand > supply) produced util=0, preventing capacity investment exactly
+        when it was most needed. The exact value is now updated each step in
+        _step_cell_capacity() via cell_capacity_utilisation_exact().
         """
-        weekly_cap = self.cell_capacity / 52.0
-        if weekly_cap < 1e-9:
-            return 0.0
-        current_cells = self.stocks.get("cells", 0.0)
-        target_cells  = TARGET_WEEKS["cells"] * BASELINE_WK["cells"]
-        util_proxy    = min(2.0, current_cells / max(target_cells, 1e-9))
-        return min(1.0, util_proxy * 0.70)
+        return self._last_cell_util
 
     def cell_capacity_utilisation_exact(self, weekly_output_gwh: float) -> float:
         """Exact utilisation given actual weekly cell output from ABM agents."""
@@ -962,6 +1236,8 @@ class SDModel:
         result["oem_backlog_k"]     = round(self.oem_backlog_k, 1)
         result["bullwhip_index"]    = round(self.bullwhip_index, 3)
         result["price_signal"]      = round(self.price_signal, 3)
+        if self.policy.any_active:
+            result["policy"] = self.policy.summary()
         return result
 
     def tier_summary(self) -> Dict[str, Dict[str, float]]:

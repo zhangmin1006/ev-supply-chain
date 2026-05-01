@@ -159,7 +159,7 @@ OEM_LABELS = {
 
 WEEKS = list(range(260))
 YEAR_TICKS = {0: "Yr 1", 52: "Yr 2", 104: "Yr 3", 156: "Yr 4", 208: "Yr 5"}
-DATA_SCHEMA_VERSION = "uk-focus-v5"
+DATA_SCHEMA_VERSION = "uk-focus-v6"
 REQUIRED_DATA_KEYS = {
     "focus_region",
     "policy_packages",
@@ -171,6 +171,9 @@ REQUIRED_DATA_KEYS = {
     "t1_motor_k",
     "market_demand_gwh",
     "cell_production_gwh",
+    "sd_oem_backlog_k",
+    "stock_cells_wk",
+    "price_cobalt",
 }
 
 PLOT_LAYOUT = dict(
@@ -582,7 +585,8 @@ st.markdown(
     "<p style='color:#475569;font-size:0.82rem;margin-bottom:16px'>"
     "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; UK OEM focus &nbsp;·&nbsp; "
     "13 agent archetypes &nbsp;·&nbsp; 9 cell makers &nbsp;·&nbsp; 7 tracked materials &nbsp;·&nbsp; "
-    "10 shock scenarios &nbsp;·&nbsp; 260-week horizon &nbsp;|&nbsp; Queen's University Belfast</p>",
+    "34 scenarios (9 shocks + 24 policy variants) &nbsp;·&nbsp; 476 validation checks &nbsp;·&nbsp; "
+    "260-week horizon &nbsp;|&nbsp; Queen's University Belfast</p>",
     unsafe_allow_html=True,
 )
 
@@ -629,8 +633,8 @@ with T_OVERVIEW:
         st.metric("Agent Archetypes", "13",
                   delta="4 tiers · qualitative rules")
     with c6:
-        st.metric("UK OEM Volume", "175 k/yr",
-                  delta="JLR · MINI · Vauxhall")
+        st.metric("Validation Checks", "476",
+                  delta="476 PASS · 0 FAIL")
 
     st.divider()
 
@@ -750,6 +754,50 @@ with T_SCENARIO:
         line(fig, WEEKS, d["price_signal"],   "Price index", hex_alpha(col, 0.6), dash="dash")
         std_layout(fig, "REE Stock (wks) & Price Pressure Index", 280)
         fig.update_yaxes(title_text="weeks / index")
+        st.plotly_chart(fig, width="stretch")
+
+    # Row 4: Shock propagation cascade
+    st.markdown("#### Shock Propagation Cascade")
+    st.caption(
+        "How the shock signal travels through the supply chain tiers. "
+        "Mineral stock depletion raises prices, which suppresses cell output and eventually OEM throughput."
+    )
+    r4c1, r4c2, r4c3, r4c4 = st.columns(4)
+    with r4c1:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["stock_cobalt_wk"],   "Cobalt BL",   "#94a3b8", dash="dot", width=1)
+        line(fig, WEEKS, d["stock_cobalt_wk"],    "Cobalt",      "#f59e0b", width=2)
+        line(fig, WEEKS, BL["stock_graphite_wk"], "Graphite BL", "#94a3b8", dash="dot", width=1, showlegend=False)
+        line(fig, WEEKS, d["stock_graphite_wk"],  "Graphite",    "#a855f7", dash="dash")
+        std_layout(fig, "1. Mineral Stocks (wks)", 220)
+        fig.update_yaxes(title_text="weeks of supply")
+        st.plotly_chart(fig, width="stretch")
+    with r4c2:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["price_cobalt"],  "Cobalt BL",    "#94a3b8", dash="dot", width=1)
+        line(fig, WEEKS, d["price_cobalt"],   "Cobalt price", "#f59e0b", width=2)
+        line(fig, WEEKS, BL["price_signal"],  "Signal BL",    "#94a3b8", dash="dot", width=1, showlegend=False)
+        line(fig, WEEKS, d["price_signal"],   "Price signal", "#ef4444", dash="dash")
+        std_layout(fig, "2. Commodity Prices (index)", 220)
+        fig.update_yaxes(title_text="index (1.0 = baseline)")
+        st.plotly_chart(fig, width="stretch")
+    with r4c3:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["cell_production_gwh"], "Cells BL", "#94a3b8", dash="dot", width=1)
+        line(fig, WEEKS, d["cell_production_gwh"],  "Cell output", col, width=2)
+        line(fig, WEEKS, BL["stock_cells_wk"],      "Stock BL",   "#94a3b8", dash="dot", width=1, showlegend=False)
+        line(fig, WEEKS, d["stock_cells_wk"],       "Cell stock", hex_alpha(col, 0.55), dash="dash")
+        std_layout(fig, "3. Cell Output (GWh) & Stock (wks)", 220)
+        fig.update_yaxes(title_text="GWh or weeks")
+        st.plotly_chart(fig, width="stretch")
+    with r4c4:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["oem_production_k"],  "OEM BL",     "#94a3b8", dash="dot", width=1)
+        line(fig, WEEKS, d["oem_production_k"],   "OEM output", col, width=2)
+        line(fig, WEEKS, BL["sd_oem_backlog_k"],  "Backlog BL", "#94a3b8", dash="dot", width=1, showlegend=False)
+        line(fig, WEEKS, d["sd_oem_backlog_k"],   "Backlog",    hex_alpha(col, 0.55), dash="dash")
+        std_layout(fig, "4. OEM Output (k/wk) & Backlog (k)", 220)
+        fig.update_yaxes(title_text="k vehicles")
         st.plotly_chart(fig, width="stretch")
 
 
@@ -1060,12 +1108,79 @@ with T_POLICY:
         with st.expander("How the packages are represented in the model"):
             st.markdown(
                 """
-                - **Battery Sovereignty Package:** increases UK cell scale-up, buffers, recovery, and mitigation of CATL concentration risk.
                 - **Tier-1 Resilience Package:** raises component buffers, shortens selected lead times, and improves recovery for harness, inverters, motors, packs, and UK OEM operations.
                 - **Critical Minerals Security Package:** adds strategic cobalt, graphite, REE, SiC, and lithium buffers, plus recycling/offtake-style supply boosts.
-                - **Full Industrial Strategy Package:** combines the above with a further energy/grid/skills/data overlay that increases growth, recovery, vertical integration, and shock absorption.
+                - **Full Industrial Strategy Package:** combines both packages with a further energy/grid/skills/data overlay that increases growth, recovery, vertical integration, and shock absorption.
                 """
             )
+
+    st.divider()
+    st.subheader("Policy Simulation Comparison")
+    st.caption(
+        "Compare production timeseries for a base shock versus each intervention package. "
+        "Uses live simulation data — select any shock scenario below."
+    )
+    pol_sc_sel = st.selectbox(
+        "Base shock scenario",
+        options=SHOCK_SCS,
+        format_func=lambda s: SC_LABELS[s],
+        key="pol_sc_sim",
+    )
+    pol_col = SC_COLOURS[pol_sc_sel]
+    POLICY_COLORS = {
+        "_tier1_policy":    "#3b82f6",
+        "_minerals_policy": "#10b981",
+        "_full_policy":     "#a855f7",
+    }
+    pol_fig_left, pol_fig_right = st.columns(2)
+    with pol_fig_left:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["oem_production_k"], "Baseline", "#94a3b8", dash="dot", width=1.5)
+        line(fig, WEEKS, DATA[pol_sc_sel]["oem_production_k"], SC_LABELS[pol_sc_sel], pol_col, width=2)
+        for suffix, label in POLICY_SUFFIX_LABELS.items():
+            pol_key = pol_sc_sel + suffix
+            if pol_key in DATA:
+                line(fig, WEEKS, DATA[pol_key]["oem_production_k"],
+                     label, POLICY_COLORS[suffix], dash="dash")
+        std_layout(fig, f"OEM Production — {SC_LABELS[pol_sc_sel]} + Policy Variants", 340)
+        fig.update_yaxes(title_text="k vehicles / week")
+        st.plotly_chart(fig, width="stretch")
+    with pol_fig_right:
+        fig = go.Figure()
+        line(fig, WEEKS, BL["sd_oem_backlog_k"], "Baseline backlog", "#94a3b8", dash="dot", width=1.5)
+        line(fig, WEEKS, DATA[pol_sc_sel]["sd_oem_backlog_k"], SC_LABELS[pol_sc_sel] + " backlog", pol_col, width=2)
+        for suffix, label in POLICY_SUFFIX_LABELS.items():
+            pol_key = pol_sc_sel + suffix
+            if pol_key in DATA:
+                line(fig, WEEKS, DATA[pol_key]["sd_oem_backlog_k"],
+                     label + " backlog", POLICY_COLORS[suffix], dash="dash")
+        std_layout(fig, f"Order Backlog — {SC_LABELS[pol_sc_sel]} + Policy Variants", 340)
+        fig.update_yaxes(title_text="k vehicles")
+        st.plotly_chart(fig, width="stretch")
+
+    # Summary table for selected scenario
+    pol_rows = []
+    for suffix, label in [("", "No policy"), *POLICY_SUFFIX_LABELS.items()]:
+        key = pol_sc_sel + suffix if suffix else pol_sc_sel
+        if key not in DATA:
+            continue
+        prod = np.array(DATA[key]["oem_production_k"])
+        bl_prod = np.array(BL["oem_production_k"])
+        avg_prod = float(prod.mean())
+        cum_loss = float(np.maximum(0, bl_prod - prod).sum())
+        peak_loss = float(np.maximum(0, 1 - prod / np.maximum(bl_prod, 1e-9)).max() * 100)
+        max_backlog = float(max(DATA[key]["sd_oem_backlog_k"]))
+        pol_rows.append(dict(
+            Package=label,
+            Avg_prod_k_wk=round(avg_prod, 3),
+            Cum_loss_k_veh=round(cum_loss, 1),
+            Peak_loss_pct=round(peak_loss, 1),
+            Max_backlog_k=round(max_backlog, 1),
+        ))
+    if pol_rows:
+        pol_summary = pd.DataFrame(pol_rows).set_index("Package")
+        pol_summary.columns = ["Avg prod (k/wk)", "Cumulative loss (k veh)", "Peak loss (%)", "Max backlog (k)"]
+        st.dataframe(pol_summary, width="stretch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1107,6 +1222,49 @@ with T_VALIDATION:
                 )
             else:
                 st.success("All validation checks passed with no warnings.")
+
+            # Category breakdown chart
+            if "category" in checks.columns:
+                cat_counts = (
+                    checks.groupby(["category", "status"])
+                    .size()
+                    .reset_index(name="count")
+                )
+                cat_total = cat_counts.groupby("category")["count"].sum().sort_values(ascending=False)
+                cat_pass = cat_counts[cat_counts["status"] == "PASS"].set_index("category")["count"]
+                fig_cat = go.Figure()
+                fig_cat.add_trace(go.Bar(
+                    x=list(cat_total.index),
+                    y=[cat_pass.get(c, 0) for c in cat_total.index],
+                    name="PASS",
+                    marker_color="#10b981",
+                ))
+                if warn_n:
+                    cat_warn = cat_counts[cat_counts["status"] == "WARN"].set_index("category")["count"]
+                    fig_cat.add_trace(go.Bar(
+                        x=list(cat_total.index),
+                        y=[cat_warn.get(c, 0) for c in cat_total.index],
+                        name="WARN",
+                        marker_color="#f59e0b",
+                    ))
+                if fail_n:
+                    cat_fail = cat_counts[cat_counts["status"] == "FAIL"].set_index("category")["count"]
+                    fig_cat.add_trace(go.Bar(
+                        x=list(cat_total.index),
+                        y=[cat_fail.get(c, 0) for c in cat_total.index],
+                        name="FAIL",
+                        marker_color="#ef4444",
+                    ))
+                cat_layout = dict(PLOT_LAYOUT)
+                cat_layout.update(
+                    title=dict(text="Validation Checks by Category", font=dict(size=12, color="#0f172a")),
+                    height=300,
+                    barmode="stack",
+                    xaxis=dict(tickangle=-35, gridcolor="#e2e8f0", tickvals=None, ticktext=None),
+                    yaxis=dict(title="Number of checks", gridcolor="#e2e8f0"),
+                )
+                fig_cat.update_layout(**cat_layout)
+                st.plotly_chart(fig_cat, width="stretch")
 
             st.subheader("Validation Checks")
             vf1, vf2 = st.columns([1, 2])

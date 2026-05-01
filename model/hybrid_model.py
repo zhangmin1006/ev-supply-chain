@@ -35,7 +35,8 @@ from .config import (
     MINERAL_AGENT_ARCHETYPES, CELL_AGENT_ARCHETYPES,
     TIER1_AGENT_ARCHETYPES, OEM_AGENT_ARCHETYPES,
 )
-from .sd_model import SDModel, BASELINE_WK
+from .sd_model import SDModel, BASELINE_WK, MINERAL_TRANSPORT_WK, AGENT_MINERALS
+from collections import deque
 from .financial_profiles import profile_for_agent, coverage_report, FOUR_TIER_AGENT_GROUPS
 from .data_source_calibration import apply_data_source_calibration
 from .policies import apply_policy_packages
@@ -168,6 +169,17 @@ class EVSupplyChainModel:
         self._build_oem_agents()
         self._build_market_agents()
         apply_policy_packages(self, self.scenario.get("policies", []))
+
+        # Re-initialise SD mineral transit pipelines with focus-region-scaled
+        # steady-state inflow so stocks start balanced and shocks propagate.
+        # Without this, global supply (100% of baseline) vastly exceeds focus-
+        # region demand (~2% for UK), accumulating stocks to the 4x cap and
+        # preventing any shock from registering in prices.
+        for mineral in AGENT_MINERALS:
+            transport_wk = MINERAL_TRANSPORT_WK.get(mineral, 4)
+            self.sd._mineral_transit[mineral] = deque(
+                [self.market_scope_fraction] * transport_wk
+            )
 
         # ── Shock schedule {week: [shock_dict, …]} ───────────────────────────
         self._shock_schedule: Dict[int, List[Dict]] = {}
@@ -428,11 +440,17 @@ class EVSupplyChainModel:
         flows: Dict[str, float] = {}
 
         # ── Tier 1: Mineral inflows (normalised supply fractions) ─────────────
+        # Scale by market_scope_fraction so that global agent supply (100% of
+        # baseline) is proportionally reduced to the focus region's demand share.
+        # Without this, global supply vastly exceeds focus-region demand, stocks
+        # accumulate to the 4× cap, and supply shocks cannot register in prices.
         for mineral in ("lithium", "cobalt", "graphite", "ree", "sic_wafer"):
-            flows[f"{mineral}_in"] = sum(
-                a.weekly_supply_contribution
-                for a in self._mineral_agents.values()
-                if a.mineral == mineral
+            flows[f"{mineral}_in"] = (
+                sum(
+                    a.weekly_supply_contribution
+                    for a in self._mineral_agents.values()
+                    if a.mineral == mineral
+                ) * self.market_scope_fraction
             )
             flows[f"{mineral}_in"] *= self.policy_mineral_supply_boost.get(mineral, 1.0)
 
