@@ -591,13 +591,7 @@ with hdr_left:
         unsafe_allow_html=True,
     )
 with hdr_right:
-    st.markdown(
-        "<div style='text-align:right;padding-top:6px'>"
-        "<span style='background:#1e3a5f;color:#ffffff;font-size:0.72rem;font-weight:600;"
-        "padding:4px 10px;border-radius:6px;white-space:nowrap'>"
-        "Queen's University Belfast</span></div>",
-        unsafe_allow_html=True,
-    )
+    pass
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 T_OVERVIEW, T_SCENARIO, T_PARAMETERS, T_POLICY, T_VALIDATION, T_OEM, T_STOCKS, T_ARCHETYPES, T_MAP, T_MARKET, T_FOCUS = st.tabs([
