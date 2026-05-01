@@ -77,6 +77,66 @@ SC_DESC = {
 }
 SHOCK_SCS = [s for s in SC_COLOURS if s != "baseline"]
 CHOOSE_SCENARIO = "Choose scenario"
+CUSTOM_SHOCK = "Custom shock"
+
+SHOCK_TYPE_TARGETS = {
+    "Critical mineral supply": [
+        "lithium_aus", "lithium_chl", "lithium_chn", "lithium_other",
+        "cobalt_drc", "cobalt_other",
+        "graphite_chn", "graphite_other",
+        "ree_chn", "ree_other",
+        "sic_wolfspeed", "sic_coherent", "sic_china", "sic_other",
+    ],
+    "Cell manufacturing": [
+        "cell_catl", "cell_byd_cells", "cell_lg_es", "cell_panasonic",
+        "cell_samsung_sdi", "cell_sk_on", "cell_calb", "cell_aesc_uk",
+        "cell_others_cells",
+    ],
+    "Tier-1 component supply": [
+        "t1_battery_pack", "t1_inverter", "t1_motor", "t1_harness",
+    ],
+    "OEM assembly": [
+        "oem_uk_oem", "oem_byd_oem", "oem_other_chinese_oem", "oem_us_oem",
+        "oem_german_oem", "oem_korean_oem", "oem_japanese_oem",
+    ],
+}
+
+SHOCK_TARGET_LABELS = {
+    "lithium_aus": "Lithium - Australia",
+    "lithium_chl": "Lithium - Chile",
+    "lithium_chn": "Lithium - China",
+    "lithium_other": "Lithium - other sources",
+    "cobalt_drc": "Cobalt - DRC",
+    "cobalt_other": "Cobalt - other sources",
+    "graphite_chn": "Graphite - China",
+    "graphite_other": "Graphite - other sources",
+    "ree_chn": "Rare earths - China",
+    "ree_other": "Rare earths - other sources",
+    "sic_wolfspeed": "SiC wafers - Wolfspeed",
+    "sic_coherent": "SiC wafers - Coherent",
+    "sic_china": "SiC wafers - China",
+    "sic_other": "SiC wafers - other sources",
+    "cell_catl": "CATL cells",
+    "cell_byd_cells": "BYD cells",
+    "cell_lg_es": "LG Energy Solution cells",
+    "cell_panasonic": "Panasonic cells",
+    "cell_samsung_sdi": "Samsung SDI cells",
+    "cell_sk_on": "SK On cells",
+    "cell_calb": "CALB cells",
+    "cell_aesc_uk": "AESC UK cells",
+    "cell_others_cells": "Other cell makers",
+    "t1_battery_pack": "Battery pack supplier",
+    "t1_inverter": "Inverter supplier",
+    "t1_motor": "Motor supplier",
+    "t1_harness": "Wiring harness supplier",
+    "oem_uk_oem": "UK OEM assembly",
+    "oem_byd_oem": "BYD OEM assembly",
+    "oem_other_chinese_oem": "Other Chinese OEM assembly",
+    "oem_us_oem": "US OEM assembly",
+    "oem_german_oem": "European OEM assembly",
+    "oem_korean_oem": "Korean OEM assembly",
+    "oem_japanese_oem": "Japanese OEM assembly",
+}
 
 OEM_COLOURS = {
     "byd_oem":            "#ef4444",
@@ -114,17 +174,17 @@ REQUIRED_DATA_KEYS = {
 }
 
 PLOT_LAYOUT = dict(
-    template="plotly_dark",
-    paper_bgcolor="#1a1d27",
-    plot_bgcolor="#1a1d27",
-    font=dict(color="#94a3b8", size=11),
+    template="plotly_white",
+    paper_bgcolor="#ffffff",
+    plot_bgcolor="#ffffff",
+    font=dict(color="#334155", size=11),
     margin=dict(l=50, r=20, t=36, b=40),
-    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2e3244", borderwidth=1,
+    legend=dict(bgcolor="rgba(255,255,255,0)", bordercolor="#cbd5e1", borderwidth=1,
                 font=dict(size=10)),
-    xaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9),
+    xaxis=dict(gridcolor="#e2e8f0", tickfont=dict(size=9),
                tickvals=list(YEAR_TICKS.keys()),
                ticktext=list(YEAR_TICKS.values())),
-    yaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9)),
+    yaxis=dict(gridcolor="#e2e8f0", tickfont=dict(size=9)),
 )
 
 
@@ -212,10 +272,14 @@ def load_validation_results():
     results_dir = os.path.join(os.path.dirname(__file__), "results")
     checks_path = os.path.join(results_dir, "validation_checks.csv")
     metrics_path = os.path.join(results_dir, "validation_scenario_metrics.csv")
+    real_ts_path = os.path.join(results_dir, "real_timeseries_validation.csv")
+    real_align_path = os.path.join(results_dir, "real_timeseries_validation_alignment.csv")
     report_path = os.path.join(results_dir, "validation_report.md")
 
     checks = pd.DataFrame()
     metrics = pd.DataFrame()
+    real_ts = pd.DataFrame()
+    real_align = pd.DataFrame()
     report = ""
     modified = None
 
@@ -225,12 +289,18 @@ def load_validation_results():
     if os.path.exists(metrics_path):
         metrics = pd.read_csv(metrics_path)
         modified = max(modified or 0, os.path.getmtime(metrics_path))
+    if os.path.exists(real_ts_path):
+        real_ts = pd.read_csv(real_ts_path)
+        modified = max(modified or 0, os.path.getmtime(real_ts_path))
+    if os.path.exists(real_align_path):
+        real_align = pd.read_csv(real_align_path, parse_dates=["month"])
+        modified = max(modified or 0, os.path.getmtime(real_align_path))
     if os.path.exists(report_path):
         with open(report_path, encoding="utf-8") as f:
             report = f.read()
         modified = max(modified or 0, os.path.getmtime(report_path))
 
-    return checks, metrics, report, modified
+    return checks, metrics, real_ts, real_align, report, modified
 
 
 def load_policy_evaluation():
@@ -246,6 +316,60 @@ def load_policy_evaluation():
 
 def _annual_growth_to_weekly(rate: float) -> float:
     return (1.0 + rate) ** (1.0 / 52.0) - 1.0
+
+
+def _build_custom_shock_scenario(params: dict) -> dict:
+    start_week = int(params["custom_shock_start_week"])
+    end_week = min(int(params["weeks"]), start_week + int(params["custom_shock_duration_weeks"]))
+    target = params["custom_shock_target"]
+    label = SHOCK_TARGET_LABELS.get(target, target)
+    severity = float(params["custom_shock_severity"])
+    return {
+        "name": "custom_shock",
+        "description": f"Custom {params['custom_shock_type'].lower()} shock to {label}",
+        "shocks": [
+            {
+                "target": target,
+                "start_week": start_week,
+                "end_week": max(start_week + 1, end_week),
+                "severity": severity,
+            }
+        ],
+    }
+
+
+POLICY_SUFFIX_LABELS = {
+    "_tier1_policy": "Tier-1 resilience package",
+    "_minerals_policy": "Critical minerals security package",
+    "_full_policy": "Full industrial strategy package",
+}
+
+
+def _base_scenario_id(scenario_id: str) -> str:
+    for suffix in POLICY_SUFFIX_LABELS:
+        if scenario_id.endswith(suffix):
+            return scenario_id[: -len(suffix)]
+    return scenario_id
+
+
+def _scenario_display_label(scenario_id: str) -> str:
+    base_id = _base_scenario_id(scenario_id)
+    label = SC_LABELS.get(base_id, scenario_id.replace("_", " ").title())
+    for suffix, policy_label in POLICY_SUFFIX_LABELS.items():
+        if scenario_id.endswith(suffix):
+            return f"{label} + {policy_label}"
+    return label
+
+
+def _validated_base_scenarios(val_metrics: pd.DataFrame) -> list[str]:
+    if val_metrics.empty or "scenario" not in val_metrics.columns:
+        return []
+    scenario_ids = []
+    for scenario_id in val_metrics["scenario"].dropna().astype(str):
+        base_id = _base_scenario_id(scenario_id)
+        if base_id in SC_DESC and base_id not in scenario_ids:
+            scenario_ids.append(base_id)
+    return scenario_ids
 
 
 @st.cache_data(show_spinner="Running custom parameter experiment...")
@@ -325,7 +449,14 @@ def run_custom_parameter_experiment(params: dict):
         sd.MINERAL_SUPPLY_GROWTH_WK["ree"] = _annual_growth_to_weekly(float(params["ree_supply_growth"]))
         sd.MINERAL_SUPPLY_GROWTH_WK["sic_wafer"] = _annual_growth_to_weekly(float(params["sic_supply_growth"]))
 
-        scenario = SCENARIOS[params["scenario"]]
+        if params.get("shock_setup") == CUSTOM_SHOCK:
+            scenario = _build_custom_shock_scenario(params)
+            scenario_label = SHOCK_TARGET_LABELS.get(
+                params["custom_shock_target"], params["custom_shock_target"]
+            )
+        else:
+            scenario = SCENARIOS[params["scenario"]]
+            scenario_label = SC_LABELS[params["scenario"]]
         weeks = int(params["weeks"])
         seed = int(params["seed"])
 
@@ -338,6 +469,8 @@ def run_custom_parameter_experiment(params: dict):
             "baseline": baseline.get_results().to_dict(orient="list"),
             "custom": custom.get_results().to_dict(orient="list"),
             "calibration": custom.get_data_source_calibration_summary().to_dict(orient="records"),
+            "scenario": scenario,
+            "scenario_label": scenario_label,
         }
     finally:
         cfg.MARKETS.clear(); cfg.MARKETS.update(orig_cfg["MARKETS"])
@@ -375,11 +508,11 @@ def line(fig, x, y, name, color, dash="solid", width=1.8, fill=False, row=None, 
 
 
 def std_layout(fig, title="", height=350, show_legend=True):
-    fig.update_layout(**PLOT_LAYOUT, title=dict(text=title, font=dict(size=12, color="#e2e8f0")),
+    fig.update_layout(**PLOT_LAYOUT, title=dict(text=title, font=dict(size=12, color="#0f172a")),
                       height=height, showlegend=show_legend)
-    fig.update_xaxes(gridcolor="#2e3244", tickfont=dict(size=9),
+    fig.update_xaxes(gridcolor="#e2e8f0", tickfont=dict(size=9, color="#334155"),
                      tickvals=list(YEAR_TICKS.keys()), ticktext=list(YEAR_TICKS.values()))
-    fig.update_yaxes(gridcolor="#2e3244", tickfont=dict(size=9))
+    fig.update_yaxes(gridcolor="#e2e8f0", tickfont=dict(size=9, color="#334155"))
     return fig
 
 
@@ -394,16 +527,41 @@ st.markdown("""
 <style>
   /* hide Streamlit header chrome on cloud */
   #MainMenu {visibility: hidden;}
-  header[data-testid="stHeader"] {background: #0f1117; border-bottom: 1px solid #2e3244;}
+  .stApp {background: #f8fafc; color: #0f172a;}
+  header[data-testid="stHeader"] {background: #f8fafc; border-bottom: 1px solid #e2e8f0;}
   footer {visibility: hidden;}
+  h1, h2, h3, h4, h5, h6, p, label, span, div {color: inherit;}
   div[data-testid="stTabs"] button {font-size: 0.82rem; font-weight: 600;}
   /* metric cards */
   div[data-testid="metric-container"] {
-    background: #20232f; border: 1px solid #2e3244; border-radius: 10px; padding: 12px 16px;
+    background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 16px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   }
-  div[data-testid="stMetricValue"] {font-size: 1.7rem !important; font-weight: 700;}
+  div[data-testid="stMetricValue"] {font-size: 1.7rem !important; font-weight: 700; color: #0f172a;}
+  div[data-testid="stMetricLabel"], div[data-testid="stMetricDelta"] {color: #475569;}
   /* dataframe */
   .stDataFrame {border-radius: 8px; overflow: hidden;}
+  .scenario-card {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-left-width: 5px;
+    border-radius: 8px;
+    padding: 10px 12px;
+    min-height: 104px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  }
+  .scenario-card strong {
+    display: block;
+    color: #0f172a;
+    font-size: 0.92rem;
+    margin-bottom: 4px;
+  }
+  .scenario-card p {
+    color: #475569;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    margin: 0;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -416,12 +574,12 @@ SUMMARY = compute_summary(DATA)
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown(
-    "<h1 style='color:#e2e8f0;font-size:1.5rem;margin-bottom:2px'>"
+    "<h1 style='color:#0f172a;font-size:1.5rem;margin-bottom:2px'>"
     "⚡ UK EV Supply Chain <span style='color:#3b82f6'>Intelligence Dashboard</span></h1>",
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<p style='color:#94a3b8;font-size:0.82rem;margin-bottom:16px'>"
+    "<p style='color:#475569;font-size:0.82rem;margin-bottom:16px'>"
     "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; UK OEM focus &nbsp;·&nbsp; "
     "13 agent archetypes &nbsp;·&nbsp; 9 cell makers &nbsp;·&nbsp; 7 tracked materials &nbsp;·&nbsp; "
     "10 shock scenarios &nbsp;·&nbsp; 260-week horizon &nbsp;|&nbsp; Queen's University Belfast</p>",
@@ -528,10 +686,10 @@ with T_SCENARIO:
     bl_mean = bl_prod.mean()
 
     st.markdown(
-        f"<div style='background:#20232f;border:1px solid {col};border-radius:8px;"
+        f"<div style='background:#ffffff;border:1px solid {col};border-radius:8px;"
         f"padding:10px 16px;margin-bottom:16px'>"
         f"<span style='color:{col};font-weight:700'>{SC_LABELS[sc_sel]}</span>"
-        f"<span style='color:#94a3b8;font-size:0.82rem'> — {SC_DESC[sc_sel]}</span></div>",
+        f"<span style='color:#475569;font-size:0.82rem'> — {SC_DESC[sc_sel]}</span></div>",
         unsafe_allow_html=True,
     )
 
@@ -606,18 +764,56 @@ with T_PARAMETERS:
     )
 
     with st.form("parameter_lab_form"):
-        c_top1, c_top2, c_top3 = st.columns(3)
+        p_scenario = CHOOSE_SCENARIO
+        p_custom_type = next(iter(SHOCK_TYPE_TARGETS))
+        p_custom_target = SHOCK_TYPE_TARGETS[p_custom_type][0]
+        p_custom_start = 4
+        p_custom_duration = 26
+        p_custom_severity = 0.50
+
+        c_top1, c_top2, c_top3, c_top4 = st.columns(4)
         with c_top1:
-            p_scenario = st.selectbox(
-                "Scenario",
-                options=[CHOOSE_SCENARIO] + SHOCK_SCS,
-                index=0,
-                format_func=lambda s: s if s == CHOOSE_SCENARIO else SC_LABELS[s],
+            p_shock_setup = st.radio(
+                "Shock setup",
+                options=["Predefined scenario", CUSTOM_SHOCK],
+                horizontal=True,
             )
         with c_top2:
-            p_weeks = st.slider("Horizon (weeks)", 52, 260, 156, 26)
+            if p_shock_setup == CUSTOM_SHOCK:
+                p_custom_type = st.selectbox("Shock type", options=list(SHOCK_TYPE_TARGETS))
+            else:
+                p_scenario = st.selectbox(
+                    "Scenario",
+                    options=[CHOOSE_SCENARIO] + SHOCK_SCS,
+                    index=0,
+                    format_func=lambda s: s if s == CHOOSE_SCENARIO else SC_LABELS[s],
+                )
         with c_top3:
+            if p_shock_setup == CUSTOM_SHOCK:
+                p_custom_target = st.selectbox(
+                    "Shock target",
+                    options=SHOCK_TYPE_TARGETS[p_custom_type],
+                    format_func=lambda target: SHOCK_TARGET_LABELS.get(target, target),
+                )
+            else:
+                p_weeks = st.slider("Horizon (weeks)", 52, 260, 156, 26)
+        with c_top4:
+            if p_shock_setup == CUSTOM_SHOCK:
+                p_weeks = st.slider("Horizon (weeks)", 52, 260, 156, 26)
             p_seed = st.number_input("Random seed", min_value=1, max_value=9999, value=42, step=1)
+
+        if p_shock_setup == CUSTOM_SHOCK:
+            st.markdown("**Custom shock timing and severity**")
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                p_custom_start = st.slider("Shock start week", 0, max(0, int(p_weeks) - 1), 4, 1)
+            with s2:
+                max_duration = max(1, int(p_weeks) - int(p_custom_start))
+                p_custom_duration = st.slider("Shock duration (weeks)", 1, max_duration, min(26, max_duration), 1)
+            with s3:
+                p_custom_severity = st.slider("Output loss severity", 0.05, 1.00, 0.50, 0.05)
+        else:
+            st.caption("Use custom shock setup to choose a supply-chain layer, target, start week, duration, and severity.")
 
         st.markdown("**Demand and UK OEM assumptions**")
         c1, c2, c3, c4 = st.columns(4)
@@ -680,13 +876,19 @@ with T_PARAMETERS:
         p_sic_growth = st.slider("SiC wafer supply growth (%/yr)", 0.0, 100.0, 35.0, 1.0) / 100.0
         run_lab = st.form_submit_button("Run parameter experiment", type="primary")
 
-    if run_lab and p_scenario == CHOOSE_SCENARIO:
+    if run_lab and p_shock_setup != CUSTOM_SHOCK and p_scenario == CHOOSE_SCENARIO:
         st.warning("Choose a scenario before running the parameter experiment.")
     elif run_lab:
         params = {
+            "shock_setup": p_shock_setup,
             "scenario": p_scenario,
             "weeks": int(p_weeks),
             "seed": int(p_seed),
+            "custom_shock_type": p_custom_type,
+            "custom_shock_target": p_custom_target,
+            "custom_shock_start_week": p_custom_start,
+            "custom_shock_duration_weeks": p_custom_duration,
+            "custom_shock_severity": p_custom_severity,
             "uk_market_gwh": p_uk_market,
             "uk_demand_growth": p_uk_growth,
             "uk_price_elasticity": p_uk_price_elasticity,
@@ -723,6 +925,8 @@ with T_PARAMETERS:
         result = run_custom_parameter_experiment(params)
         base = result["baseline"]
         custom = result["custom"]
+        scenario_label = result["scenario_label"]
+        scenario_color = "#38bdf8" if p_shock_setup == CUSTOM_SHOCK else SC_COLOURS[p_scenario]
         weeks = list(range(len(custom["week"])))
 
         base_prod = np.array(base["oem_production_k"])
@@ -744,7 +948,7 @@ with T_PARAMETERS:
         with pc1:
             fig = go.Figure()
             line(fig, weeks, base["oem_production_k"], "Adjusted baseline", "#94a3b8", dash="dot", width=2)
-            line(fig, weeks, custom["oem_production_k"], SC_LABELS[p_scenario], SC_COLOURS[p_scenario], width=2)
+            line(fig, weeks, custom["oem_production_k"], scenario_label, scenario_color, width=2)
             std_layout(fig, "UK OEM Production Under Adjusted Parameters", 320)
             st.plotly_chart(fig, width="stretch")
         with pc2:
@@ -825,11 +1029,11 @@ with T_POLICY:
             ))
         pol_layout = dict(PLOT_LAYOUT)
         pol_layout.update(
-            title=dict(text="Avoided UK Vehicle Loss By Intervention", font=dict(size=12, color="#e2e8f0")),
+            title=dict(text="Avoided UK Vehicle Loss By Intervention", font=dict(size=12, color="#0f172a")),
             height=380,
             barmode="group",
-            xaxis=dict(tickangle=-35, gridcolor="#2e3244"),
-            yaxis=dict(title="Avoided loss (k vehicles)", gridcolor="#2e3244"),
+            xaxis=dict(tickangle=-35, gridcolor="#e2e8f0"),
+            yaxis=dict(title="Avoided loss (k vehicles)", gridcolor="#e2e8f0"),
         )
         fig.update_layout(**pol_layout)
         st.plotly_chart(fig, width="stretch")
@@ -869,7 +1073,7 @@ with T_POLICY:
 # ═══════════════════════════════════════════════════════════════════════════════
 with T_VALIDATION:
     st.subheader("Model Validation Results")
-    checks, val_metrics, val_report, val_modified = load_validation_results()
+    checks, val_metrics, real_ts_metrics, real_ts_alignment, val_report, val_modified = load_validation_results()
 
     if checks.empty and val_metrics.empty and not val_report:
         st.warning("No validation artifacts found. Run `python validate_model.py` to generate validation outputs.")
@@ -926,33 +1130,105 @@ with T_VALIDATION:
 
         if not val_metrics.empty:
             st.subheader("Scenario Validation Metrics")
-            st.dataframe(val_metrics, width="stretch", hide_index=True)
+            validation_scenarios = _validated_base_scenarios(val_metrics)
+            if validation_scenarios:
+                st.caption("Highlighted below are only the base scenarios included in the validation metrics.")
+                card_cols = st.columns(min(3, len(validation_scenarios)))
+                for i, scenario_id in enumerate(validation_scenarios):
+                    colour = SC_COLOURS.get(scenario_id, "#2563eb")
+                    with card_cols[i % len(card_cols)]:
+                        st.markdown(
+                            f"<div class='scenario-card' style='border-left-color:{colour}'>"
+                            f"<strong>{SC_LABELS.get(scenario_id, scenario_id)}</strong>"
+                            f"<p>{SC_DESC.get(scenario_id, 'Validation scenario used by the model checks.')}</p>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                st.write("")
+
+            display_metrics = val_metrics.copy()
+            if "scenario" in display_metrics.columns:
+                display_metrics["scenario_label"] = display_metrics["scenario"].astype(str).map(_scenario_display_label)
+                first_cols = ["scenario_label"] + [c for c in display_metrics.columns if c not in {"scenario", "scenario_label"}]
+                display_metrics = display_metrics[first_cols]
+            st.dataframe(display_metrics, width="stretch", hide_index=True)
 
             if {"scenario", "cumulative_loss_k_veh_vs_baseline", "max_total_backlog_k"}.issubset(val_metrics.columns):
+                validation_plot_df = val_metrics[
+                    val_metrics["scenario"].astype(str).isin(validation_scenarios)
+                ].copy()
+                if validation_plot_df.empty:
+                    validation_plot_df = val_metrics.copy()
+                validation_plot_df["scenario_label"] = validation_plot_df["scenario"].astype(str).map(_scenario_display_label)
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
-                    x=val_metrics["scenario"],
-                    y=val_metrics["cumulative_loss_k_veh_vs_baseline"],
+                    x=validation_plot_df["scenario_label"],
+                    y=validation_plot_df["cumulative_loss_k_veh_vs_baseline"],
                     name="Cumulative loss",
                     marker_color="#f97316",
                 ))
                 fig.add_trace(go.Scatter(
-                    x=val_metrics["scenario"],
-                    y=val_metrics["max_total_backlog_k"],
+                    x=validation_plot_df["scenario_label"],
+                    y=validation_plot_df["max_total_backlog_k"],
                     name="Max backlog",
                     mode="lines+markers",
-                    line=dict(color="#06b6d4", width=2),
+                    line=dict(color="#2563eb", width=2),
                     yaxis="y2",
                 ))
                 val_layout = dict(PLOT_LAYOUT)
                 val_layout.update(
-                    title=dict(text="Validation Scenario Stress Metrics", font=dict(size=12, color="#e2e8f0")),
+                    title=dict(text="Validation Scenario Stress Metrics", font=dict(size=12, color="#0f172a")),
                     height=360,
-                    yaxis=dict(title="Cumulative loss (k vehicles)", gridcolor="#2e3244"),
-                    yaxis2=dict(title="Max backlog (k vehicles)", overlaying="y", side="right", gridcolor="#2e3244"),
-                    xaxis=dict(tickangle=-35, gridcolor="#2e3244"),
+                    yaxis=dict(title="Cumulative loss (k vehicles)", gridcolor="#e2e8f0"),
+                    yaxis2=dict(title="Max backlog (k vehicles)", overlaying="y", side="right", gridcolor="#e2e8f0"),
+                    xaxis=dict(tickangle=-35, gridcolor="#e2e8f0"),
                 )
                 fig.update_layout(**val_layout)
+                st.plotly_chart(fig, width="stretch")
+
+        if not real_ts_metrics.empty:
+            st.subheader("Real Historical Time-Series Validation")
+            st.caption(
+                "Modelled UK OEM production is benchmarked against the ONS/SMMT monthly UK car production "
+                "seasonally adjusted index. Both series are normalised to 2023 average = 100, so MAE is in index points."
+            )
+            rt1, rt2, rt3 = st.columns(3)
+            best_rt = real_ts_metrics.sort_values("mae_index_points").iloc[0]
+            with rt1:
+                st.metric("Best MAE", f"{best_rt['mae_index_points']:.1f} index pts", best_rt["scenario"])
+            with rt2:
+                st.metric("Best MAPE", f"{best_rt['mape_index_pct']:.1f}%")
+            with rt3:
+                st.metric("Months Compared", int(best_rt["months_compared"]))
+            st.dataframe(real_ts_metrics, width="stretch", hide_index=True)
+
+            if not real_ts_alignment.empty:
+                scenario_options = sorted(real_ts_alignment["scenario"].dropna().unique())
+                chosen_rt = st.selectbox("Choose real-data validation scenario", scenario_options, key="real_ts_scenario")
+                plot_df = real_ts_alignment[real_ts_alignment["scenario"] == chosen_rt].copy()
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=plot_df["month"],
+                    y=plot_df["observed_index_2023_100"],
+                    name="Observed ONS/SMMT UK cars",
+                    mode="lines+markers",
+                    line=dict(color="#10b981", width=2),
+                ))
+                fig.add_trace(go.Scatter(
+                    x=plot_df["month"],
+                    y=plot_df["model_index_2023_100"],
+                    name="Model UK OEM",
+                    mode="lines+markers",
+                    line=dict(color="#3b82f6", width=2),
+                ))
+                rt_layout = dict(PLOT_LAYOUT)
+                rt_layout.update(
+                    title=dict(text="Observed vs Modelled UK Production Performance", font=dict(size=12, color="#0f172a")),
+                    height=340,
+                    xaxis=dict(gridcolor="#e2e8f0"),
+                    yaxis=dict(title="Index, 2023 average = 100", gridcolor="#e2e8f0"),
+                )
+                fig.update_layout(**rt_layout)
                 st.plotly_chart(fig, width="stretch")
 
         if val_report:
@@ -1094,8 +1370,8 @@ with T_ARCHETYPES:
         col.markdown(
             f"<div style='border:1px solid {colour};border-radius:10px;padding:12px 14px'>"
             f"<div style='color:{colour};font-size:1.1rem;font-weight:700'>{emoji} Tier {tier}</div>"
-            f"<div style='color:#e2e8f0;font-size:0.95rem;font-weight:600;margin:4px 0'>{count} archetypes</div>"
-            f"<div style='color:#94a3b8;font-size:0.78rem'>{names}</div></div>",
+            f"<div style='color:#0f172a;font-size:0.95rem;font-weight:600;margin:4px 0'>{count} archetypes</div>"
+            f"<div style='color:#475569;font-size:0.78rem'>{names}</div></div>",
             unsafe_allow_html=True,
         )
     _arch_card(mc, "#f59e0b", "⛏️", "0  Minerals", 3, "StateBacked · WesternMiner · GreenfieldBuilder")
@@ -1166,10 +1442,10 @@ with T_ARCHETYPES:
              SC_COLOURS["drc_cobalt"], width=2, row=2, col=1)
         std_layout(fig, "Cobalt Price -> Composite Price Signal Cascade (DRC shock)", 320)
         fig.update_yaxes(title_text="Price index", row=1, col=1,
-                         gridcolor="#2e3244", tickfont=dict(size=9))
+                         gridcolor="#e2e8f0", tickfont=dict(size=9))
         fig.update_yaxes(title_text="Signal index", row=2, col=1,
-                         gridcolor="#2e3244", tickfont=dict(size=9))
-        fig.update_xaxes(gridcolor="#2e3244", tickfont=dict(size=9),
+                         gridcolor="#e2e8f0", tickfont=dict(size=9))
+        fig.update_xaxes(gridcolor="#e2e8f0", tickfont=dict(size=9),
                          tickvals=list(YEAR_TICKS.keys()), ticktext=list(YEAR_TICKS.values()),
                          row=2, col=1)
         st.plotly_chart(fig, width="stretch")
@@ -1193,10 +1469,10 @@ with T_ARCHETYPES:
              "Cell output — CATL disruption", SC_COLOURS["china_catl_disruption"], width=2, row=2, col=1)
         std_layout(fig, "PlatformLeader Disruption -> Cell Capacity & Output (CATL shock)", 320)
         fig.update_yaxes(title_text="Utilisation", row=1, col=1,
-                         gridcolor="#2e3244", tickfont=dict(size=9))
+                         gridcolor="#e2e8f0", tickfont=dict(size=9))
         fig.update_yaxes(title_text="GWh/week", row=2, col=1,
-                         gridcolor="#2e3244", tickfont=dict(size=9))
-        fig.update_xaxes(gridcolor="#2e3244", tickfont=dict(size=9),
+                         gridcolor="#e2e8f0", tickfont=dict(size=9))
+        fig.update_xaxes(gridcolor="#e2e8f0", tickfont=dict(size=9),
                          tickvals=list(YEAR_TICKS.keys()), ticktext=list(YEAR_TICKS.values()),
                          row=2, col=1)
         st.plotly_chart(fig, width="stretch")
@@ -1350,7 +1626,7 @@ with T_FOCUS:
         st.markdown(
             "<div style='border:1px solid #06b6d4;border-radius:10px;padding:16px'>"
             "<h3 style='color:#06b6d4;margin-bottom:6px'>🇬🇧 UK EV Manufacturers</h3>"
-            "<p style='color:#94a3b8;font-size:0.8rem'>JLR (Tata Motors), BMW MINI Oxford, "
+            "<p style='color:#475569;font-size:0.8rem'>JLR (Tata Motors), BMW MINI Oxford, "
             "Vauxhall (Stellantis Ellesmere Port). Post-Brexit rules-of-origin threshold "
             "rises to 55% UK/EU content by 2027.</p></div>",
             unsafe_allow_html=True,
@@ -1382,7 +1658,7 @@ with T_FOCUS:
         st.markdown(
             "<div style='border:1px solid #ef4444;border-radius:10px;padding:16px'>"
             "<h3 style='color:#ef4444;margin-bottom:6px'>Upstream China Exposure</h3>"
-            "<p style='color:#94a3b8;font-size:0.8rem'>The UK endpoint remains exposed to "
+            "<p style='color:#475569;font-size:0.8rem'>The UK endpoint remains exposed to "
             "CATL concentration, China graphite controls, and China rare-earth magnet restrictions "
             "through imported cells, packs, motors, and materials.</p></div>",
             unsafe_allow_html=True,
@@ -1760,11 +2036,11 @@ def _make_sc_map_html() -> str:
     font-size: 12px; padding: 14px;
   }
   .callout {
-    background: #20232f; border: 1px solid #3b82f6; border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 14px; color: #94a3b8;
+    background: #ffffff; border: 1px solid #93c5fd; border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 14px; color: #475569;
     font-size: 11px; line-height: 1.5;
   }
-  .callout strong { color: #e2e8f0; }
+  .callout strong { color: #0f172a; }
   .sc-grid {
     display: grid;
     grid-template-columns: 1fr 22px 1fr 22px 1fr 22px 1fr;
@@ -2079,11 +2355,11 @@ with T_MAP:
         ),
     ))
     fig_sk.update_layout(
-        template="plotly_dark", paper_bgcolor="#1a1d27", plot_bgcolor="#1a1d27",
-        font=dict(color="#e2e8f0", size=10),
+        template="plotly_white", paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(color="#334155", size=10),
         height=430, margin=dict(l=20, r=20, t=30, b=20),
         title=dict(text="Cell-to-Market Flow  —  Annual Production Volumes",
-                   font=dict(size=12, color="#e2e8f0")),
+                   font=dict(size=12, color="#0f172a")),
     )
     st.plotly_chart(fig_sk, width="stretch")
 
@@ -2153,9 +2429,9 @@ with T_MARKET:
             ))
             _layout = dict(PLOT_LAYOUT)
             _layout.update(
-                title=dict(text="Latest Public Benchmark Prices", font=dict(size=12, color="#e2e8f0")),
-                xaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9)),
-                yaxis=dict(gridcolor="#2e3244", tickfont=dict(size=9), title="Nominal price in source unit"),
+                title=dict(text="Latest Public Benchmark Prices", font=dict(size=12, color="#0f172a")),
+                xaxis=dict(gridcolor="#e2e8f0", tickfont=dict(size=9)),
+                yaxis=dict(gridcolor="#e2e8f0", tickfont=dict(size=9), title="Nominal price in source unit"),
                 height=320,
             )
             _fig.update_layout(**_layout)
