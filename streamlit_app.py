@@ -607,7 +607,7 @@ with st.sidebar:
             "Parameter Lab",
             "Policy Evaluation",
             "Validation",
-            "🏭 UK OEM",
+            "🇬🇧 UK EV Supply Chain",
             "⛏️ Supply Chain Stocks",
             "🤖 Agent Archetypes",
             "Supply Chain Map",
@@ -1409,7 +1409,7 @@ if _page == "Validation":
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — OEM BREAKDOWN
 # ═══════════════════════════════════════════════════════════════════════════════
-if _page == "🏭 UK OEM":
+if _page == "🇬🇧 UK EV Supply Chain":
     st.markdown(
         "UK EV output aggregates JLR, BMW MINI Oxford, Vauxhall Ellesmere Port, and other UK EV assembly exposure. "
         "Scenario overlays show how global material, cell, and logistics shocks transmit into the UK production endpoint.",
@@ -1783,12 +1783,7 @@ if _page == "🤖 Agent Archetypes":
         "WesternMiner mothball triggers after 12 consecutive weeks below 0.85x."
     )
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — UK & CHINA FOCUS
-# ═══════════════════════════════════════════════════════════════════════════════
-if _page == "🇬🇧 UK Stress Focus":
-
+    st.divider()
     uk_col, cn_col = st.columns(2)
 
     # ── UK ────────────────────────────────────────────────────────────────────
