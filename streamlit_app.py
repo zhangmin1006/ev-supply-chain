@@ -30,7 +30,7 @@ st.set_page_config(
     page_title="UK EV Supply Chain Intelligence",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
     menu_items={
         "Get help": "https://github.com/zhangmin1006/ev-supply-chain",
         "Report a bug": "https://github.com/zhangmin1006/ev-supply-chain/issues",
@@ -593,26 +593,35 @@ with hdr_left:
 with hdr_right:
     pass
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-T_OVERVIEW, T_SCENARIO, T_PARAMETERS, T_POLICY, T_VALIDATION, T_OEM, T_STOCKS, T_ARCHETYPES, T_MAP, T_MARKET, T_FOCUS = st.tabs([
-    "📊 Overview",
-    "🔍 Scenario Analysis",
-    "Parameter Lab",
-    "Policy Evaluation",
-    "Validation",
-    "🏭 UK OEM",
-    "⛏️ Supply Chain Stocks",
-    "🤖 Agent Archetypes",
-    "Supply Chain Map",
-    "📡 Live Data",
-    "🇬🇧 UK Stress Focus",
-])
+# ── Sidebar navigation ──────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown(
+        "<div style='font-size:0.78rem;font-weight:700;color:#64748b;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:8px'>Navigation</div>",
+        unsafe_allow_html=True,
+    )
+    _page = st.radio(
+        "page",
+        options=[
+            "📊 Overview",
+            "🔍 Scenario Analysis",
+            "Parameter Lab",
+            "Policy Evaluation",
+            "Validation",
+            "🏭 UK OEM",
+            "⛏️ Supply Chain Stocks",
+            "🤖 Agent Archetypes",
+            "Supply Chain Map",
+            "📡 Live Data",
+            "🇬🇧 UK Stress Focus",
+        ],
+        label_visibility="collapsed",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — OVERVIEW
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_OVERVIEW:
+if _page == "📊 Overview":
     # KPI row
     worst   = SUMMARY.iloc[0]
     highest_cum = SUMMARY.sort_values("Cum_loss_k", ascending=False).iloc[0]
@@ -676,7 +685,7 @@ with T_OVERVIEW:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — SCENARIO ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_SCENARIO:
+if _page == "🔍 Scenario Analysis":
     sc_sel = st.selectbox(
         "Choose scenario for deep-dive analysis:",
         options=[CHOOSE_SCENARIO] + SHOCK_SCS,
@@ -807,7 +816,7 @@ with T_SCENARIO:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — PARAMETER LAB
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_PARAMETERS:
+if _page == "Parameter Lab":
     st.subheader("ABM + SD Parameter Lab")
     st.caption(
         "Adjust estimated assumptions and run a fresh UK-focused simulation. "
@@ -1025,7 +1034,7 @@ with T_PARAMETERS:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — POLICY EVALUATION
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_POLICY:
+if _page == "Policy Evaluation":
     st.subheader("UK Government Intervention Evaluation")
     st.caption(
         "Compares shock-only scenarios with matched intervention packages derived from "
@@ -1189,7 +1198,7 @@ with T_POLICY:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — VALIDATION
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_VALIDATION:
+if _page == "Validation":
     st.subheader("Model Validation Results")
     checks, val_metrics, real_ts_metrics, real_ts_alignment, val_report, val_modified = load_validation_results()
 
@@ -1400,7 +1409,7 @@ with T_VALIDATION:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — OEM BREAKDOWN
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_OEM:
+if _page == "🏭 UK OEM":
     st.markdown(
         "UK EV output aggregates JLR, BMW MINI Oxford, Vauxhall Ellesmere Port, and other UK EV assembly exposure. "
         "Scenario overlays show how global material, cell, and logistics shocks transmit into the UK production endpoint.",
@@ -1469,7 +1478,7 @@ with T_OEM:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — SUPPLY CHAIN STOCKS
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_STOCKS:
+if _page == "⛏️ Supply Chain Stocks":
     st.markdown(
         "Inventory stocks at each supply chain tier. Values < 1 week are critical — the Leontief "
         "constraint propagates downstream and reduces vehicle output."
@@ -1516,7 +1525,7 @@ with T_STOCKS:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — AGENT ARCHETYPES
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_ARCHETYPES:
+if _page == "🤖 Agent Archetypes":
     st.markdown(
         "Each agent in the model belongs to a **behavioural archetype** — a qualitatively distinct "
         "decision rule that reflects real-world strategic posture. Archetypes share the same "
@@ -1778,7 +1787,7 @@ with T_ARCHETYPES:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — UK & CHINA FOCUS
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_FOCUS:
+if _page == "🇬🇧 UK Stress Focus":
 
     uk_col, cn_col = st.columns(2)
 
@@ -2450,7 +2459,7 @@ def _make_sc_map_html() -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — VALUE CHAIN MAP
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_MAP:
+if _page == "Supply Chain Map":
     st.markdown(
         "The diagram below maps every **agent** in the 4-tier ABM model to its tier, "
         "archetype, and real-world counterpart. Arrows represent the Leontief "
@@ -2528,7 +2537,7 @@ with T_MAP:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — LIVE MARKET DATA
 # ═══════════════════════════════════════════════════════════════════════════════
-with T_MARKET:
+if _page == "📡 Live Data":
     st.subheader("Critical EV Mineral Prices")
     st.caption(
         "Fetched from open commodity price sources and cached for 1 hour. "
