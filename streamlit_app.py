@@ -159,7 +159,7 @@ OEM_LABELS = {
 
 WEEKS = list(range(260))
 YEAR_TICKS = {0: "Yr 1", 52: "Yr 2", 104: "Yr 3", 156: "Yr 4", 208: "Yr 5"}
-DATA_SCHEMA_VERSION = "uk-focus-v6"
+DATA_SCHEMA_VERSION = "uk-focus-v7-coupling"
 REQUIRED_DATA_KEYS = {
     "focus_region",
     "policy_packages",
@@ -174,6 +174,15 @@ REQUIRED_DATA_KEYS = {
     "sd_oem_backlog_k",
     "stock_cells_wk",
     "price_cobalt",
+    "bottleneck_component",
+    "bottleneck_severity",
+    "cell_unmet_demand_gwh",
+    "tier1_unmet_demand_k",
+    "oem_unmet_demand_k",
+    "shortfall_packs_k",
+    "shortfall_inverters_k",
+    "shortfall_motors_k",
+    "shortfall_harness_k",
 }
 
 PLOT_LAYOUT = dict(
@@ -519,6 +528,55 @@ def std_layout(fig, title="", height=350, show_legend=True):
     return fig
 
 
+def _last_value(series_like, default=0.0):
+    if series_like is None:
+        return default
+    try:
+        if len(series_like) == 0:
+            return default
+        return series_like[-1]
+    except Exception:
+        return default
+
+
+def _diagnostic_summary(data: dict) -> pd.DataFrame:
+    """Compact latest-week view of ABM -> SD diagnostic signals."""
+    rows = [
+        ("Active bottleneck", _last_value(data.get("bottleneck_component"), "none"), "component with largest Tier-1 shortfall"),
+        ("Bottleneck severity", f"{float(_last_value(data.get('bottleneck_severity'), 0.0)) * 100:.1f}%", "shortfall ratio, bounded 0-100%"),
+        ("Cell unmet demand", f"{float(_last_value(data.get('cell_unmet_demand_gwh'), 0.0)):.3f} GWh", "unserved cell demand this week"),
+        ("Tier-1 unmet demand", f"{float(_last_value(data.get('tier1_unmet_demand_k'), 0.0)):.2f} k units", "sum of component shortfalls"),
+        ("OEM unmet demand", f"{float(_last_value(data.get('oem_unmet_demand_k'), 0.0)):.2f} k vehicles", "market demand not assembled"),
+    ]
+    return pd.DataFrame(rows, columns=["Signal", "Latest value", "Meaning"])
+
+
+def _plot_coupling_diagnostics(data: dict, title: str, weeks=None):
+    """Return a two-panel figure for bottleneck severity and component shortfalls."""
+    if weeks is None:
+        weeks = list(range(len(data.get("week", []))))
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        row_heights=[0.42, 0.58],
+        subplot_titles=("Bottleneck severity", "Component shortfalls"),
+    )
+    severity = data.get("bottleneck_severity", [0] * len(weeks))
+    line(fig, weeks, severity, "Bottleneck severity", "#ef4444", width=2, fill=True, row=1, col=1)
+    shortfall_cols = [
+        ("shortfall_packs_k", "Packs", "#2563eb"),
+        ("shortfall_inverters_k", "Inverters", "#a855f7"),
+        ("shortfall_motors_k", "Motors", "#10b981"),
+        ("shortfall_harness_k", "Harness", "#f97316"),
+    ]
+    for key, label, colour in shortfall_cols:
+        if key in data:
+            line(fig, weeks, data[key], label, colour, width=1.6, row=2, col=1)
+    std_layout(fig, title, 390)
+    fig.update_yaxes(title_text="severity", row=1, col=1)
+    fig.update_yaxes(title_text="k units", row=2, col=1)
+    return fig
+
+
 def hex_alpha(hex_col, a):
     h = hex_col.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -644,8 +702,8 @@ if _page == "📊 Overview":
         st.metric("Agent Archetypes", "13",
                   delta="4 tiers · qualitative rules")
     with c6:
-        st.metric("Validation Checks", "476",
-                  delta="476 PASS · 0 FAIL")
+        st.metric("Validation Checks", "478",
+                  delta="478 PASS · 0 FAIL")
 
     st.divider()
 
@@ -810,6 +868,20 @@ if _page == "🔍 Scenario Analysis":
         std_layout(fig, "4. OEM Output (k/wk) & Backlog (k)", 220)
         fig.update_yaxes(title_text="k vehicles")
         st.plotly_chart(fig, width="stretch")
+
+    st.markdown("#### SD-ABM Coupling Diagnostics")
+    st.caption(
+        "These signals are passed back from ABM agents into the SD layer each week. "
+        "They preserve the active bottleneck and unmet-demand information that aggregate stock flows hide."
+    )
+    diag_left, diag_right = st.columns([1, 2])
+    with diag_left:
+        st.dataframe(_diagnostic_summary(d), width="stretch", hide_index=True)
+    with diag_right:
+        st.plotly_chart(
+            _plot_coupling_diagnostics(d, "ABM -> SD bottleneck and shortfall signals"),
+            width="stretch",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1017,6 +1089,16 @@ if _page == "Parameter Lab":
             line(fig, weeks, custom["stock_cobalt_wk"], "Cobalt stock", "#ef4444", dash="dot")
             std_layout(fig, "Selected SD State Variables", 320)
             st.plotly_chart(fig, width="stretch")
+
+        st.markdown("**Coupling diagnostics from this experiment**")
+        diag_left, diag_right = st.columns([1, 2])
+        with diag_left:
+            st.dataframe(_diagnostic_summary(custom), width="stretch", hide_index=True)
+        with diag_right:
+            st.plotly_chart(
+                _plot_coupling_diagnostics(custom, "ABM -> SD bottleneck and shortfall signals", weeks),
+                width="stretch",
+            )
 
         st.markdown("**Adjusted parameter set**")
         param_df = pd.DataFrame(
@@ -1233,6 +1315,27 @@ if _page == "Validation":
                 )
             else:
                 st.success("All validation checks passed with no warnings.")
+
+            coupling_checks = checks[
+                checks["check"].astype(str).str.contains(
+                    "coupling|Bottleneck|diagnostic", case=False, na=False
+                )
+            ]
+            if not coupling_checks.empty:
+                st.subheader("Coupling Validation")
+                cc1, cc2 = st.columns([1, 2])
+                with cc1:
+                    st.metric(
+                        "Coupling checks",
+                        len(coupling_checks),
+                        f"{int((coupling_checks['status'] == 'PASS').sum())} PASS",
+                    )
+                with cc2:
+                    st.dataframe(
+                        coupling_checks[["category", "check", "status", "value", "expected"]],
+                        width="stretch",
+                        hide_index=True,
+                    )
 
             # Category breakdown chart
             if "category" in checks.columns:
@@ -1536,6 +1639,13 @@ if _page == "🤖 Agent Archetypes":
     )
 
     # ── Tier overview cards ───────────────────────────────────────────────────
+    st.info(
+        "The SD-ABM interface now uses an explicit coupling bus: SD sends physical and perceived "
+        "stocks, pipeline arrivals, prices, backlog, bullwhip, and policy state to agents; agents "
+        "return flows plus bottleneck, component-shortfall, and unmet-demand diagnostics that feed "
+        "back into SD price pressure."
+    )
+
     mc, cc, tc, oc = st.columns(4)
     def _arch_card(col, colour, emoji, tier, count, names):
         col.markdown(

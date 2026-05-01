@@ -439,6 +439,8 @@ consistency,stock_motors_wk non-negative in baseline,PASS,min=6.001,>= 0,
 consistency,stock_harness_wk non-negative in baseline,PASS,min=2.001,>= 0,
 consistency,OEM production grows over 260-week baseline (demand-pulled capacity),PASS,start=3.630 end=15.249,end > 1.10x start,
 consistency,Baseline price signal mean > 1.0 (steady slight scarcity),PASS,1.2395,> 1.0,
+consistency,ABM-to-SD diagnostic coupling columns present,PASS,missing=[],all diagnostic columns present,
+consistency,Bottleneck severity bounded,PASS,0.0000..0.0000,0 <= bottleneck_severity <= 1,
 real_timeseries,baseline MAE vs ONS/SMMT UK production index,PASS,50.97,reported in index points; >=24 observed months,"34 months, 2023-01..2025-10; MAPE=64.221%; scaled level MAE=9.367 k vehicles/month"
 real_timeseries,uk_supply_chain_friction MAE vs ONS/SMMT UK production index,PASS,56.9,reported in index points; >=24 observed months,"34 months, 2023-01..2025-10; MAPE=71.737%; scaled level MAE=9.674 k vehicles/month"
 outputs,existing baseline.csv schema matches fresh model,PASS,"missing=0, extra=0",same columns as a fresh run,missing: ; extra: 

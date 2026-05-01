@@ -760,6 +760,11 @@ check("ABM-SD coupling: cells stock changes after first step",
 fracs = m_coup.sd.input_fractions
 check("ABM-SD coupling: input_fractions dict non-empty",
       len(fracs) > 0 and all(v >= 0 for v in fracs.values()))
+signals = m_coup.coupling_signals
+check("ABM-SD coupling: explicit coupling bus exposes physical and measured stocks",
+      {"physical_stocks", "measured_stocks", "stockout_risk"}.issubset(signals.keys()))
+check("ABM-SD coupling: coupling bus carries pipeline and price signals",
+      {"pipeline_arrivals_next", "mineral_prices", "component_prices"}.issubset(signals.keys()))
 
 # SD history grows with each model step
 steps_before = len(m_coup.sd.history)
@@ -771,6 +776,11 @@ check("ABM-SD coupling: sd.history grows by 1 per model step",
 df_coup = run(build(seed=3)).get_results()
 check("ABM-SD coupling: cell_cap_util column is from exact ABM output (not proxy)",
       "cell_cap_util" in df_coup.columns and (df_coup["cell_cap_util"] >= 0).all())
+diag_cols = {"bottleneck_severity", "cell_unmet_demand_gwh",
+             "tier1_unmet_demand_k", "oem_unmet_demand_k"}
+check("ABM-SD coupling: ABM diagnostics are recorded in results",
+      diag_cols.issubset(df_coup.columns),
+      f"missing={sorted(diag_cols - set(df_coup.columns))}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -647,6 +647,32 @@ def sd_abm_consistency(
          "Baseline price signal mean > 1.0 (steady slight scarcity)",
          ps_mean > 1.0, f"{ps_mean:.4f}", "> 1.0")
 
+    diagnostic_cols = [
+        "bottleneck_severity",
+        "cell_unmet_demand_gwh",
+        "tier1_unmet_demand_k",
+        "oem_unmet_demand_k",
+        "shortfall_packs_k",
+        "shortfall_inverters_k",
+        "shortfall_motors_k",
+        "shortfall_harness_k",
+    ]
+    missing_diag = [col for col in diagnostic_cols if col not in baseline.columns]
+    _add(checks, "consistency",
+         "ABM-to-SD diagnostic coupling columns present",
+         not missing_diag,
+         f"missing={missing_diag}",
+         "all diagnostic columns present")
+
+    if "bottleneck_severity" in baseline.columns:
+        sev_min = float(baseline["bottleneck_severity"].min())
+        sev_max = float(baseline["bottleneck_severity"].max())
+        _add(checks, "consistency",
+             "Bottleneck severity bounded",
+             sev_min >= -1e-9 and sev_max <= 1.0 + 1e-9,
+             f"{sev_min:.4f}..{sev_max:.4f}",
+             "0 <= bottleneck_severity <= 1")
+
 
 def existing_results_audit(checks: list[Check], fresh_results: dict[str, pd.DataFrame]) -> None:
     for name, fresh in fresh_results.items():

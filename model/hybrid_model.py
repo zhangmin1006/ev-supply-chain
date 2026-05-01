@@ -126,6 +126,7 @@ class EVSupplyChainModel:
         self.policy_notes: List[str] = []
         self.policy_shock_mitigation: Dict[str, float] = {}
         self.policy_mineral_supply_boost: Dict[str, float] = {}
+        self.coupling_signals: Dict[str, object] = {}
         self._active_oem_names = [
             name for name, cfg in OEMS.items()
             if focus_region is None or cfg["region"] == focus_region
@@ -522,6 +523,37 @@ class EVSupplyChainModel:
             flows[f"{comp}_in"]  = self._tier1_agents[agent_key].output_k
             flows[f"{comp}_out"] = total_oem_prod  # 1 of each per vehicle assembled
 
+        # ABM -> SD communication diagnostics: preserve which tier/component
+        # constrained production instead of sending only aggregate flows.
+        component_agent_map = {
+            "packs": "battery_pack",
+            "inverters": "inverter",
+            "motors": "motor",
+            "harness": "harness",
+        }
+        component_shortfall_ratios = {}
+        for stock_name, agent_key in component_agent_map.items():
+            demand_k = self.get_component_demand(self._tier1_agents[agent_key].component)
+            shortfall_k = max(0.0, demand_k - self._tier1_agents[agent_key].output_k)
+            flows[f"shortfall_{stock_name}_k"] = shortfall_k
+            component_shortfall_ratios[stock_name] = shortfall_k / max(demand_k, 1e-9)
+
+        bottleneck_component, bottleneck_severity = max(
+            component_shortfall_ratios.items(),
+            key=lambda item: item[1],
+            default=("none", 0.0),
+        )
+        if bottleneck_severity <= 1e-9:
+            bottleneck_component = "none"
+        flows["bottleneck_component"] = bottleneck_component
+        flows["bottleneck_severity"] = bottleneck_severity
+        flows["cell_unmet_demand_gwh"] = sum(
+            max(0.0, a.backlog_gwh) for a in self._cell_agents.values()
+        )
+        flows["tier1_unmet_demand_k"] = sum(
+            flows[f"shortfall_{stock_name}_k"] for stock_name in component_agent_map
+        )
+
         # New: order rate = sum of pipeline additions by Tier-1 agents (bullwhip)
         flows["order_rate_k"] = sum(
             a.pipeline[-1] if a.pipeline else 0.0
@@ -544,6 +576,10 @@ class EVSupplyChainModel:
         flows["total_demand_gwh_wk"]= sum(
             mkt.weekly_demand_gwh for mkt in self._market_agents.values()
         )
+        flows["oem_unmet_demand_k"] = sum(
+            max(0.0, self.get_oem_demand(name) - agent.production_k)
+            for name, agent in self._oem_agents.items()
+        )
 
         return flows
 
@@ -556,7 +592,7 @@ class EVSupplyChainModel:
         self._apply_shocks()
 
         # 2. SD → agents
-        self.sd.compute_input_fractions()
+        self.coupling_signals = self.sd.compute_coupling_signals()
 
         # 3–7. Agents step in tier order
         for a in self._mineral_agents.values():
@@ -644,6 +680,23 @@ class EVSupplyChainModel:
         row["sd_ev_demand_gwh_yr"]  = self.sd.ev_demand_gwh_yr
         row["sd_oem_backlog_k"]     = self.sd.oem_backlog_k
         row["bullwhip_index"]       = self.sd.bullwhip_index
+        row["bottleneck_component"] = self.sd._last_agent_diagnostics.get(
+            "bottleneck_component", "none"
+        )
+        row["bottleneck_severity"]  = self.sd._last_agent_diagnostics.get(
+            "bottleneck_severity", 0.0
+        )
+        row["cell_unmet_demand_gwh"] = self.sd._last_agent_diagnostics.get(
+            "cell_unmet_demand_gwh", 0.0
+        )
+        row["tier1_unmet_demand_k"] = self.sd._last_agent_diagnostics.get(
+            "tier1_unmet_demand_k", 0.0
+        )
+        row["oem_unmet_demand_k"] = self.sd._last_agent_diagnostics.get(
+            "oem_unmet_demand_k", 0.0
+        )
+        for stock_name, value in self.sd._last_component_shortfalls.items():
+            row[f"shortfall_{stock_name}_k"] = value
 
         # Tier-1 subsystem output
         for comp, a in self._tier1_agents.items():

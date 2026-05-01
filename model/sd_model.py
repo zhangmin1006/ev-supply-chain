@@ -591,6 +591,17 @@ class SDModel:
         self.price_signals: Dict[str, float] = dict(self.prices)
         self.price_signals["battery_pack"] = self.price_signal
         self.price_signals.update({f"component_{k}": v for k, v in self.component_prices.items()})
+        self.coupling_signals: Dict[str, object] = {}
+        self._last_component_shortfalls: Dict[str, float] = {
+            "packs": 0.0, "inverters": 0.0, "motors": 0.0, "harness": 0.0,
+        }
+        self._last_agent_diagnostics: Dict[str, object] = {
+            "cell_unmet_demand_gwh": 0.0,
+            "tier1_unmet_demand_k": 0.0,
+            "oem_unmet_demand_k": 0.0,
+            "bottleneck_component": "none",
+            "bottleneck_severity": 0.0,
+        }
 
         # ── History ───────────────────────────────────────────────────────────
         self.history: list = []
@@ -644,6 +655,42 @@ class SDModel:
         self.price_signals.update({f"component_{k}": v for k, v in self.component_prices.items()})
         return fracs
 
+    def compute_coupling_signals(self) -> Dict[str, object]:
+        """
+        Build the SD -> ABM communication packet for the current week.
+
+        Legacy agent fields (`input_fractions`, `prices`, and
+        `component_prices`) are still updated, but this packet makes the
+        interface explicit and separates physical stock, perceived stock, price,
+        pipeline, backlog, bullwhip, and policy signals.
+        """
+        fracs = self.compute_input_fractions()
+        stockout_risk = {
+            name: max(0.0, min(1.0, 1.0 - min(frac, 1.0)))
+            for name, frac in fracs.items()
+        }
+        pipeline_arrivals_next = {
+            mineral: (queue[0] if queue else 0.0)
+            for mineral, queue in self._mineral_transit.items()
+        }
+        self.coupling_signals = {
+            "input_fractions": dict(fracs),
+            "physical_stocks": dict(self.stocks),
+            "measured_stocks": dict(self._measured_stocks),
+            "stockout_risk": stockout_risk,
+            "pipeline_arrivals_next": pipeline_arrivals_next,
+            "mineral_prices": dict(self.prices),
+            "component_prices": dict(self.component_prices),
+            "vehicle_price_signal": self.price_signal,
+            "raw_vehicle_price_signal": self.raw_price_signal,
+            "demand_forecast_gwh_yr": self.ev_demand_gwh_yr,
+            "oem_backlog_k": self.oem_backlog_k,
+            "bullwhip_index": self.bullwhip_index,
+            "policy": self.policy.summary() if self.policy.any_active else {},
+            "last_abm_diagnostics": dict(self._last_agent_diagnostics),
+        }
+        return self.coupling_signals
+
     def update(self, flows: Dict[str, float]) -> None:
         """
         Main SD update — called after all ABM agents have stepped.
@@ -678,6 +725,7 @@ class SDModel:
 
         # 3. Component stocks (no transport pipeline — handled by ABM agents)
         self._update_component_stocks(flows)
+        self._ingest_abm_diagnostics(flows)
 
         # 4. Cap stocks at 4 × target (policy-adjusted targets raise the cap)
         min_tgt  = self.policy.mineral_target_mult
@@ -702,6 +750,20 @@ class SDModel:
         self._step_cell_capacity(flows)
         self._step_demand_and_backlog(flows)
         self._step_bullwhip(flows)
+
+    def _ingest_abm_diagnostics(self, flows: Dict[str, float]) -> None:
+        """Cache richer ABM -> SD diagnostics carried alongside material flows."""
+        self._last_component_shortfalls = {
+            name: max(0.0, float(flows.get(f"shortfall_{name}_k", 0.0)))
+            for name in ("packs", "inverters", "motors", "harness")
+        }
+        self._last_agent_diagnostics = {
+            "cell_unmet_demand_gwh": max(0.0, float(flows.get("cell_unmet_demand_gwh", 0.0))),
+            "tier1_unmet_demand_k": max(0.0, float(flows.get("tier1_unmet_demand_k", 0.0))),
+            "oem_unmet_demand_k": max(0.0, float(flows.get("oem_unmet_demand_k", 0.0))),
+            "bottleneck_component": str(flows.get("bottleneck_component", "none")),
+            "bottleneck_severity": max(0.0, float(flows.get("bottleneck_severity", 0.0))),
+        }
 
     def step_internal(self) -> None:
         """Advance purely endogenous stocks (no ABM flows). Exposed for testing."""
@@ -737,6 +799,18 @@ class SDModel:
         snap["ev_demand_gwh_yr"]  = self.ev_demand_gwh_yr
         snap["oem_backlog_k"]     = self.oem_backlog_k
         snap["bullwhip_index"]    = self.bullwhip_index
+        snap["bottleneck_severity"] = float(
+            self._last_agent_diagnostics.get("bottleneck_severity", 0.0)
+        )
+        snap["cell_unmet_demand_gwh"] = float(
+            self._last_agent_diagnostics.get("cell_unmet_demand_gwh", 0.0)
+        )
+        snap["tier1_unmet_demand_k"] = float(
+            self._last_agent_diagnostics.get("tier1_unmet_demand_k", 0.0)
+        )
+        snap["oem_unmet_demand_k"] = float(
+            self._last_agent_diagnostics.get("oem_unmet_demand_k", 0.0)
+        )
         # Policy ramps
         if self.policy.any_active:
             snap["policy_bat_sov"]   = self.policy.bat_sov
@@ -951,6 +1025,23 @@ class SDModel:
             + HARNESS_PARTS_COST_SHARE * parts_raw
         )
 
+        component_shortfall_pressure = {}
+        for stock_name, price_name in (
+            ("packs", "pack"),
+            ("inverters", "inverter"),
+            ("motors", "motor"),
+            ("harness", "harness"),
+        ):
+            target = TARGET_WEEKS[stock_name] * BASELINE_WK[stock_name]
+            shortfall = self._last_component_shortfalls.get(stock_name, 0.0)
+            component_shortfall_pressure[price_name] = min(
+                0.35, 0.20 * shortfall / max(target, 1e-9)
+            )
+        pack_raw += component_shortfall_pressure["pack"]
+        inverter_raw += component_shortfall_pressure["inverter"]
+        motor_raw += component_shortfall_pressure["motor"]
+        harness_raw += component_shortfall_pressure["harness"]
+
         vehicle_raw = (
             VEHICLE_PRICE_WEIGHTS["pack"] * pack_raw
             + VEHICLE_PRICE_WEIGHTS["inverter"] * inverter_raw
@@ -1006,8 +1097,11 @@ class SDModel:
             availability.append(measured / max(target, 1e-9))
         avg_availability = max(0.05, float(np.mean(availability)))
         scarcity = self._softplus(1.0 - avg_availability)
+        bottleneck_pressure = 0.10 * float(
+            self._last_agent_diagnostics.get("bottleneck_severity", 0.0)
+        )
         trend = self.component_prices["parts"] * (1.0 + PARTS_COST_GROWTH_WK)
-        return trend + 0.20 * scarcity
+        return trend + 0.20 * scarcity + bottleneck_pressure
 
     def _step_cell_capacity(self, flows: Dict[str, float]) -> None:
         """

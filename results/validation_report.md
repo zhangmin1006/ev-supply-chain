@@ -4,17 +4,17 @@ Fresh simulations run: 34 scenarios, 260 weeks, seed 42.
 
 ## Summary
 
-- **PASS: 476**
+- **PASS: 478**
 - WARN: 0
 - FAIL: 0
-- Total checks: 476
+- Total checks: 478
 
 ### Checks by category
 
 | Category               | PASS | WARN | FAIL |
 | ---------------------- | ---- | ---- | ---- |
 | baseline               |    5 |    0 |    0 |
-| consistency            |    9 |    0 |    0 |
+| consistency            |   11 |    0 |    0 |
 | dynamics               |    7 |    0 |    0 |
 | invariants             |  170 |    0 |    0 |
 | outputs                |   34 |    0 |    0 |

@@ -139,7 +139,7 @@ def build_results_doc():
         "and shortens recovery from week 128 to week 106.",
         "Mineral prices rise measurably under all supply shocks; the LFP chemistry "
         "substitution feedback loop partially buffers cobalt scarcity.",
-        "All 647 automated checks across four test suites pass with zero failures.",
+        "All 652 automated checks across four test suites pass with zero failures.",
     ]
     for f in findings:
         _bullet(doc, f)
@@ -398,9 +398,9 @@ def build_results_doc():
     val_rows = [
         ["SD Layer Unit Tests",     "test_sd_model.py",    "32",  "32",  "0"],
         ["SD Policy Tests",         "test_sd_policy.py",   "55",  "55",  "0"],
-        ["ABM & Hybrid Tests",      "test_abm.py",         "84",  "84",  "0"],
-        ["Full Model Validation",   "validate_model.py",   "476", "476", "0"],
-        ["TOTAL",                   "—",                   "647", "647", "0"],
+        ["ABM & Hybrid Tests",      "test_abm.py",         "87",  "87",  "0"],
+        ["Full Model Validation",   "validate_model.py",   "478", "478", "0"],
+        ["TOTAL",                   "—",                   "652", "652", "0"],
     ]
     _add_table(doc,
                ["Suite", "File", "Total Checks", "Pass", "Fail"],
@@ -417,7 +417,7 @@ def build_results_doc():
         "propagation (12)":    "Full chain tracing: DRC cobalt → stock falls → price rises → LFP shift; graphite shock → stock/price; CATL shock → cell production falls; UK friction → OEM production falls → backlog rises; price recovery after shock ends.",
         "policy (9)":          "Each policy package raises mean OEM production vs same-shock no-policy; Full Strategy shortens recovery; minerals policy raises cobalt stock during DRC shock.",
         "dynamics (7)":        "System dynamics: demand grows at IEA-range rate; LFP bounded; bullwhip > 1; cell utilisation non-trivial.",
-        "consistency (9)":     "Cross-layer consistency: mineral stocks near target; no cell stockout; OEM production grows 260 weeks; price signal > 1.0 in steady state.",
+        "consistency (11)":    "Cross-layer consistency: mineral stocks near target; no cell stockout; OEM production grows 260 weeks; price signal > 1.0 in steady state; ABM-to-SD diagnostic columns present and bounded.",
         "real_timeseries (2)": "ONS/SMMT indexed comparison: baseline and UK friction MAE reported over 34 months (2023–2025). Note: model tracks UK EV OEM output; observed series is total UK car registrations — structural difference limits direct MAE interpretation.",
         "outputs (34)":        "All 34 scenario CSV files present and schema-consistent with fresh model output.",
     }
@@ -516,9 +516,12 @@ MAIN LOOP (week = 0 to n_weeks - 1):
     ELSE:
       agent.resolve_shock()
 
-  // Step 2: SD -> Agents (input availability signals)
-  sd.compute_input_fractions()          // for each mineral/component:
-                                        //   fraction = f(stock, target, policy)
+  // Step 2: SD -> Agents (explicit coupling signals)
+  coupling <- sd.compute_coupling_signals()
+  // coupling contains:
+  //   input_fractions, physical_stocks, measured_stocks, stockout_risk,
+  //   pipeline_arrivals_next, mineral_prices, component_prices,
+  //   vehicle_price_signal, demand_forecast, backlog, bullwhip, policy
 
   // Step 3: Tier-1 — Mineral supplier agents step
   FOR each agent IN mineral_agents:
@@ -555,39 +558,45 @@ MAIN LOOP (week = 0 to n_weeks - 1):
     // backlog_ratio <- total_backlog / backlog_scale
     // weekly_demand_gwh <- trend * price_level * availability_factor
 
-  // Step 8: Collect ABM flows -> feed to SD
+  // Step 8: Collect ABM flows and diagnostics -> feed to SD
   flows <- aggregate_flows(mineral_agents, cell_agents, tier1_agents,
                            oem_agents, market_agents)
   // mineral_in[m]  = SUM(agent.weekly_supply_contribution) * market_scope_fraction
   // mineral_out[m] = f(cell_production, lfp_share, ree_dep, sic_dep)
   // cells_in       = SUM(cell_agent.output_gwh)
   // components_in  = tier1_agent.output_k  (per component)
+  // diagnostics:
+  //   shortfall_{packs|inverters|motors|harness}_k
+  //   cell_unmet_demand_gwh, tier1_unmet_demand_k, oem_unmet_demand_k
+  //   bottleneck_component, bottleneck_severity
 
   // Step 9: SD update
   sd.update(flows)
   //  9a. policy.tick() -> advance ramp counters
   //  9b. FOR each mineral: FIFO_transit.push(inflow * noise); stock += arrived - outflow
   //  9c. Update component stocks: stock += inflow - outflow
-  //  9d. Cap stocks at 4 * target (policy-adjusted)
-  //  9e. Measurement lag: measured_stock += (1/tau) * (stock - measured_stock)
-  //  9f. F1 Price formation (softplus scarcity signal):
+  //  9d. Cache ABM diagnostics for bottleneck-aware price pressure
+  //  9e. Cap stocks at 4 * target (policy-adjusted)
+  //  9f. Measurement lag: measured_stock += (1/tau) * (stock - measured_stock)
+  //  9g. F1 Price formation (softplus scarcity signal):
   //       deviation = (measured_stock - target) / target
   //       adj_speed = base_speed * (1.5 if recovering else 1.0) * policy_adj
   //       price[m] *= (1 - adj_speed * deviation)   [bounded PRICE_FLOOR..PRICE_CEIL]
-  //  9g. F2 Chemistry mix (LFP share):
+  //  9h. F2 Chemistry mix (LFP share):
   //       lfp_target = logistic(cobalt_price - threshold)
   //       lfp_share += (1.2 if lfp_share < lfp_target else 0.8) * (lfp_target - lfp_share) / lag
-  //  9h. F3 Price signal (composite battery price):
-  //       price_signal = weighted_mean(mineral_prices, bom_weights) * component_price_factor
-  //  9i. F4 Cell capacity investment (Erlang pipeline):
+  //  9i. F3 Price signal (composite battery/component price):
+  //       price_signal = weighted_mean(mineral_prices, bom_weights)
+  //       component prices add stock scarcity + ABM component shortfall pressure
+  //  9j. F4 Cell capacity investment (Erlang pipeline):
   //       IF cell_utilisation > CAPEX_TRIGGER - policy_reduction:
   //         wip_stage[0] += investment; advance_pipeline()
   //         cell_capacity += wip_stage[2] * build_speed_mult
-  //  9j. F5 Demand/backlog (SD reconciliation):
+  //  9k. F5 Demand/backlog (SD reconciliation):
   //       ev_demand_gwh_yr *= (1 + demand_growth_wk + policy_boost)
   //       backlog_clearance = 0.5 + policy_clearance_boost
   //       oem_backlog_k = max(0, oem_backlog_k + new_shortfall - clearance)
-  //  9k. Bullwhip: bullwhip_index = EWMA(order_rate / 4*vehicle_demand, smooth * mult)
+  //  9l. Bullwhip: bullwhip_index = EWMA(order_rate / 4*vehicle_demand, smooth * mult)
 
   // Step 10: Record metrics
   sd.record()
@@ -666,6 +675,15 @@ def build_methods_doc():
          "inflows to the SD layer are scaled by the UK market scope fraction "
          "(~2.4% of global demand) so that the SD stocks reflect UK-proportional "
          "exposure rather than global aggregates."),
+        ("Explicit SD-ABM communication",
+         "The two layers exchange a structured coupling packet each week. SD sends "
+         "physical stock, measured stock, stockout risk, pipeline-arrival, price, "
+         "demand, backlog, bullwhip, and policy signals to the agents. ABM agents "
+         "return material flows plus diagnostic information on unmet cell demand, "
+         "Tier-1 component shortfalls, OEM unmet demand, and the active bottleneck "
+         "component. This makes the hybrid interface auditable and allows the SD "
+         "price layer to respond to agent-level bottlenecks instead of only aggregate "
+         "stock levels."),
     ]
     for title, text in design:
         _para(doc, title, bold=True)
@@ -700,7 +718,28 @@ def build_methods_doc():
                tier_rows,
                "Table M1: Supply chain tiers and agent inventory")
 
-    _heading(doc, "2.2 Feedback Loops (SD Layer)", level=2)
+    _heading(doc, "2.2 SD-ABM Coupling Interface", level=2)
+    _para(doc,
+        "The hybrid model now uses an explicit communication interface rather than "
+        "relying only on agents reading individual SD attributes. At the start of "
+        "each week, SDModel.compute_coupling_signals() refreshes the legacy "
+        "input_fractions and also creates a coupling packet containing physical "
+        "stocks, measured/perceived stocks, stockout-risk indicators, next pipeline "
+        "arrivals, mineral and component prices, vehicle price signal, SD demand "
+        "forecast, OEM backlog, bullwhip index, active policy state, and the previous "
+        "week's ABM diagnostic summary."
+    )
+    _para(doc,
+        "After agents step, HybridModel._collect_flows() returns both material "
+        "flows and diagnostic signals. The diagnostic signals include cell unmet "
+        "demand, Tier-1 unmet component demand, OEM unmet demand, component-level "
+        "shortfalls for packs/inverters/motors/harness, and a bottleneck component "
+        "with severity in [0, 1]. The SD layer caches these diagnostics and feeds "
+        "them into component and parts-price pressure, so a component bottleneck can "
+        "affect downstream price signals even when aggregate stocks remain positive."
+    )
+
+    _heading(doc, "2.3 Feedback Loops (SD Layer)", level=2)
     loops = [
         ("F1 — Supply–Demand Price Formation (Balancing)",
          "Mineral and component prices adjust toward scarcity signals. For each "
@@ -910,20 +949,22 @@ def build_methods_doc():
          "late-activation behaviour, and each package's specific effect on SD "
          "parameters (capex trigger, build speed, demand growth, price recovery, "
          "mineral outflow reduction, bullwhip smoothing, backlog clearance)."),
-        ("Layer 3: ABM and Hybrid Tests (test_abm.py, 84 checks)",
+        ("Layer 3: ABM and Hybrid Tests (test_abm.py, 87 checks)",
          "Tests all five agent classes in isolation using a FakeModel stub, "
          "and the full hybrid model across 15 test groups: construction, "
          "52-week baseline run, reproducibility, individual agent behaviour, "
          "shock propagation cascade, all 10 scenario library scenarios, "
          "policy parameter modifications, DataFrame schema, archetype differences, "
-         "ABM-SD coupling consistency, and shock mitigation."),
-        ("Layer 4: Full Model Validation (validate_model.py, 476 checks)",
+         "ABM-SD coupling consistency, explicit coupling-bus diagnostics, and "
+         "shock mitigation."),
+        ("Layer 4: Full Model Validation (validate_model.py, 478 checks)",
          "Runs all 34 scenarios for 260 weeks and checks: static configuration "
          "integrity, numeric invariants, calibration targets, shock propagation "
          "chain at each tier, policy effectiveness (mean OEM production uplift, "
          "recovery acceleration, mineral stock injection), demand and capacity "
          "dynamics (growth rate, LFP bounds, bullwhip > 1), SD–ABM consistency "
-         "(stocks near target, no stockouts, OEM production grows), and "
+         "(stocks near target, no stockouts, OEM production grows, diagnostic "
+         "coupling columns present and bounded), and "
          "real historical time-series MAE against ONS/SMMT UK production index."),
     ]
     for name, desc in val_layers:
