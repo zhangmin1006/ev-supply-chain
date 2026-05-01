@@ -607,12 +607,11 @@ with st.sidebar:
             "Parameter Lab",
             "Policy Evaluation",
             "Validation",
-            "🇬🇧 UK EV Supply Chain",
+            "UK EV Supply Chain",
             "⛏️ Supply Chain Stocks",
             "🤖 Agent Archetypes",
             "Supply Chain Map",
             "📡 Live Data",
-            "🇬🇧 UK Stress Focus",
         ],
         label_visibility="collapsed",
     )
@@ -1409,7 +1408,7 @@ if _page == "Validation":
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — OEM BREAKDOWN
 # ═══════════════════════════════════════════════════════════════════════════════
-if _page == "🇬🇧 UK EV Supply Chain":
+if _page == "UK EV Supply Chain":
     st.markdown(
         "UK EV output aggregates JLR, BMW MINI Oxford, Vauxhall Ellesmere Port, and other UK EV assembly exposure. "
         "Scenario overlays show how global material, cell, and logistics shocks transmit into the UK production endpoint.",
