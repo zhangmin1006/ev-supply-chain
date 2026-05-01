@@ -530,8 +530,8 @@ st.markdown("""
 <style>
   /* hide Streamlit header chrome on cloud */
   #MainMenu {visibility: hidden;}
-  .stApp {background: #f8fafc; color: #0f172a;}
-  header[data-testid="stHeader"] {background: #f8fafc; border-bottom: 1px solid #e2e8f0;}
+  .stApp {background: #eef0f3; color: #0f172a;}
+  header[data-testid="stHeader"] {background: #eef0f3; border-bottom: 1px solid #d1d5db;}
   footer {visibility: hidden;}
   h1, h2, h3, h4, h5, h6, p, label, span, div {color: inherit;}
   div[data-testid="stTabs"] button {font-size: 0.82rem; font-weight: 600;}
@@ -576,19 +576,28 @@ SUMMARY = compute_summary(DATA)
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
-st.markdown(
-    "<h1 style='color:#0f172a;font-size:1.5rem;margin-bottom:2px'>"
-    "⚡ UK EV Supply Chain <span style='color:#3b82f6'>Intelligence Dashboard</span></h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p style='color:#475569;font-size:0.82rem;margin-bottom:16px'>"
-    "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; UK OEM focus &nbsp;·&nbsp; "
-    "13 agent archetypes &nbsp;·&nbsp; 9 cell makers &nbsp;·&nbsp; 7 tracked materials &nbsp;·&nbsp; "
-    "34 scenarios (9 shocks + 24 policy variants) &nbsp;·&nbsp; 476 validation checks &nbsp;·&nbsp; "
-    "260-week horizon &nbsp;|&nbsp; Queen's University Belfast</p>",
-    unsafe_allow_html=True,
-)
+hdr_left, hdr_right = st.columns([5, 1])
+with hdr_left:
+    st.markdown(
+        "<h1 style='color:#0f172a;font-size:1.5rem;margin-bottom:2px'>"
+        "⚡ UK EV Supply Chain <span style='color:#3b82f6'>Intelligence Dashboard</span></h1>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='color:#475569;font-size:0.82rem;margin-bottom:16px'>"
+        "Hybrid Agent-Based + System Dynamics model &nbsp;·&nbsp; UK OEM focus &nbsp;·&nbsp; "
+        "13 agent archetypes &nbsp;·&nbsp; 9 cell makers &nbsp;·&nbsp; 7 tracked materials &nbsp;·&nbsp; "
+        "34 scenarios (9 shocks + 24 policy variants) &nbsp;·&nbsp; 260-week horizon</p>",
+        unsafe_allow_html=True,
+    )
+with hdr_right:
+    st.markdown(
+        "<div style='text-align:right;padding-top:6px'>"
+        "<span style='background:#1e3a5f;color:#ffffff;font-size:0.72rem;font-weight:600;"
+        "padding:4px 10px;border-radius:6px;white-space:nowrap'>"
+        "Queen's University Belfast</span></div>",
+        unsafe_allow_html=True,
+    )
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 T_OVERVIEW, T_SCENARIO, T_PARAMETERS, T_POLICY, T_VALIDATION, T_OEM, T_STOCKS, T_ARCHETYPES, T_MAP, T_MARKET, T_FOCUS = st.tabs([
